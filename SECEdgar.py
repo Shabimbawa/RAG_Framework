@@ -4,6 +4,8 @@ import time
 import os
 import pandas as pd
 import numpy as np
+import pdfkit
+
 
 # New folder to store retreived data from SEC EDGAR
 output_dir = "sec_submissions"
@@ -41,9 +43,6 @@ for ticker in nasdaq_100_tickers:
     CIKs = nasdaq_df[nasdaq_df["ticker"]==ticker]["cik"].values
     cik_list.extend(CIKs)
 
-
-# print(cik_list)
-
 # Making the requests and all from SEC EDGAR
 headers = {
     "User-Agent": "rhenzlargo80@gmail.com"
@@ -60,9 +59,9 @@ for cik in cik_list[:2]:
         data = response.json()
         print(f"Data for CIK {cik_padded}")
 
-        file_path = os.path.join(output_dir, f"{cik_padded}.json")
-        with open(file_path, "w") as f:
-             json.dump(data, f, indent=4)
+        # file_path = os.path.join(output_dir, f"{cik_padded}.json")
+        # with open(file_path, "w") as f:
+        #      json.dump(data, f, indent=4)
 
     else:
         print(f"Failed to fetch data for CIK{cik_padded} (status{response.status_code})")
@@ -70,6 +69,25 @@ for cik in cik_list[:2]:
     time.sleep(0.11)
 
 
+# Might transfer code below into the loop above in order to make it dynamic
+with open("sec_submissions/0000320193.json", "r") as f: 
+    Apple_data = json.load(f)
 
+Apple_data = pd.DataFrame(Apple_data["filings"]["recent"])
 
+access_number = Apple_data[Apple_data.form == "10-K"].accessionNumber.values[0].replace("-", "")
+file_name = Apple_data[Apple_data.form == "10-K"].primaryDocument.values[0]
 
+url = f"https://www.sec.gov/Archives/edgar/data/0000320193/{access_number}/{file_name}"
+req_content = requests.get(url, headers=headers).content.decode("utf-8")
+
+output_dir_10k = "10-k_documents"
+os.makedirs(output_dir_10k, exist_ok=True)
+
+html_path = os.path.join(output_dir_10k, file_name)
+pdf_path = html_path + ".pdf"
+
+with open(html_path, "w", encoding="utf-8") as f:
+    f.write(req_content)
+
+pdfkit.from_file(html_path, pdf_path, options={"quiet": ""})
