@@ -5,11 +5,8 @@ import os
 import pandas as pd
 import numpy as np
 import pdfkit
-
-
-# New folder to store retreived data from SEC EDGAR
-output_dir = "sec_submissions"
-os.makedirs(output_dir, exist_ok=True)
+import time
+from datetime import datetime, timedelta
 
 # Opening the OG dataset with all companies in SEC EDGAR
 with open("company_tickers_exchange.json", "r") as f:
@@ -48,6 +45,39 @@ headers = {
     "User-Agent": "rhenzlargo80@gmail.com"
 }
 
+# Generating the directories to store the filings
+output_dirs = ["10-k_documents", "10-q_documents", "8-k_documents"]
+
+for dir_name in output_dirs:
+    os.makedirs(dir_name, exist_ok=True)
+
+five_years_prior = datetime.now() - timedelta(5*365)
+
+def filing_retrievals(filtered_filings, cik_stripped, output_dir):
+    for _, row in filtered_filings.iterrows():
+        try:
+            access_number = row.accessionNumber.replace("-", "")
+            file_name = row.primaryDocument
+            filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_stripped}/{access_number}/{file_name}"
+
+            req_content = requests.get(filing_url, headers=headers).content.decode("utf-8")
+            html_path = os.path.join(output_dir, f"{cik_stripped}_{file_name}") 
+            pdf_path = html_path + ".pdf"
+
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(req_content)
+            
+            pdfkit.from_file(html_path, pdf_path, options={"quiet": ""})
+            os.remove(html_path) #deletes the html file after conversion into pdf
+
+        except Exception as e:
+            print({e})
+
+        finally: # this ensures that the htm files get deleted cuz sometimes wkhtmltopdf produces errors that don't allow it to delete the htm file
+            if os.path.exists(html_path):
+                os.remove(html_path)
+
+
 # Testing with only 2 for now since we might overload their servers LOL
 for cik in cik_list[:2]:
     cik_padded = str(cik).zfill(10)
@@ -59,35 +89,23 @@ for cik in cik_list[:2]:
         data = response.json()
         print(f"Data for CIK {cik_padded}")
 
-        # file_path = os.path.join(output_dir, f"{cik_padded}.json")
-        # with open(file_path, "w") as f:
-        #      json.dump(data, f, indent=4)
+        recent_filings = pd.DataFrame(data["filings"]["recent"])
+        recent_filings["filingDate"] = pd.to_datetime(recent_filings["filingDate"])
+        cik_stripped = str(int(cik))
 
+        form_types = {"10-K": output_dirs[0], "10-Q": output_dirs[1]} # still have to handle the 8-k reports, idk if the fetched data from SEC EDGAR has 8-k details also
+        for form, output_dir in form_types.items():
+            filtered = recent_filings[(recent_filings["form"] == form) & (recent_filings["filingDate"] >= five_years_prior)]
+
+            if filtered.empty:
+                print(f"No {form}s from the past 5 years for CIK {cik_padded}")
+                continue
+
+            filing_retrievals(filtered, cik_stripped, output_dir)
+           
     else:
         print(f"Failed to fetch data for CIK{cik_padded} (status{response.status_code})")
 
-    time.sleep(0.11)
+    time.sleep(0.11) # time delay to reduce number of reqs to SEC EDGAR
 
 
-# Might transfer code below into the loop above in order to make it dynamic
-with open("sec_submissions/0000320193.json", "r") as f: 
-    Apple_data = json.load(f)
-
-Apple_data = pd.DataFrame(Apple_data["filings"]["recent"])
-
-access_number = Apple_data[Apple_data.form == "10-K"].accessionNumber.values[0].replace("-", "")
-file_name = Apple_data[Apple_data.form == "10-K"].primaryDocument.values[0]
-
-url = f"https://www.sec.gov/Archives/edgar/data/0000320193/{access_number}/{file_name}"
-req_content = requests.get(url, headers=headers).content.decode("utf-8")
-
-output_dir_10k = "10-k_documents"
-os.makedirs(output_dir_10k, exist_ok=True)
-
-html_path = os.path.join(output_dir_10k, file_name)
-pdf_path = html_path + ".pdf"
-
-with open(html_path, "w", encoding="utf-8") as f:
-    f.write(req_content)
-
-pdfkit.from_file(html_path, pdf_path, options={"quiet": ""})
