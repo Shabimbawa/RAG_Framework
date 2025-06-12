@@ -78,16 +78,8 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir):
         except Exception as e:
             print(f"Error with {file_name}: {e}")
 
-        finally: # Makes sure that the .htm files get deleted and saves only the pdfs
-            if os.path.exists(html_path):
-                try:
-                    os.remove(html_path)
-                except Exception as e:
-                    print(f"Failed to delete {html_path}: {e}")
-
-
 # Testing with only 2 for now since we might overload their servers LOL
-for cik in cik_list[:2]:
+for cik in cik_list:
     cik_padded = str(cik).zfill(10)
     url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
 
