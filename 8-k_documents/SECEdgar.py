@@ -51,10 +51,8 @@ output_dirs = ["10-k_documents", "10-q_documents", "8-k_documents"]
 for dir_name in output_dirs:
     os.makedirs(dir_name, exist_ok=True)
 
-# Logic for data from the past 5 years
 five_years_prior = datetime.now() - timedelta(5*365)
 
-# Function to do the actual retrieval of the nasdaq 100 company filings
 def filing_retrievals(filtered_filings, cik_stripped, output_dir):
     for _, row in filtered_filings.iterrows():
         file_name = row.primaryDocument
@@ -65,7 +63,7 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir):
         try:
             if os.path.exists(pdf_path):
                 print(f"PDF already exists for {file_name}") # so that it doesn't re-download files
-                continue # exits the current 'for' loop iteration
+                continue #exits the current 'for' loop iteration
 
             filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_stripped}/{access_number}/{file_name}"
             req_content = requests.get(filing_url, headers=headers).content.decode("utf-8")
@@ -74,11 +72,12 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir):
                 f.write(req_content)
 
             pdfkit.from_file(html_path, pdf_path, options={"quiet": ""})
+            os.remove(html_path)
 
         except Exception as e:
             print(f"Error with {file_name}: {e}")
 
-        finally: # Makes sure that the .htm files get deleted and saves only the pdfs
+        finally:
             if os.path.exists(html_path):
                 try:
                     os.remove(html_path)
