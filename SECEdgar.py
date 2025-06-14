@@ -7,6 +7,10 @@ import numpy as np
 import pdfkit
 import time
 from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
+
+os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
+print("Current Working Directory:", os.getcwd())
 
 # Opening the OG dataset with all companies in SEC EDGAR
 with open("company_tickers_exchange.json", "r") as f:
@@ -42,7 +46,7 @@ for ticker in nasdaq_100_tickers:
 
 # Making the requests and all from SEC EDGAR
 headers = {
-    "User-Agent": "rhenzlargo80@gmail.com"
+    "User-Agent": "rhenzgerard0@gmail.com"
 }
 
 # Generating the directories to store the filings
@@ -54,58 +58,132 @@ for dir_name in output_dirs:
 # Logic for data from the past 5 years
 five_years_prior = datetime.now() - timedelta(5*365)
 
+
+
+def extract_html_tables(html_content):
+    soup = BeautifulSoup(html_content, 'html.parser')
+    tables = []
+
+    for table in soup.find_all('table'):
+        rows = []
+        for tr in table.find_all('tr'):
+            row = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+            # Skip rows where all cells are empty
+            if any(cell.strip() for cell in row):
+                rows.append(row)
+
+        if not rows:
+            continue
+
+        max_len = max(len(row) for row in rows)
+        padded_rows = [row + [''] * (max_len - len(row)) for row in rows]
+
+        # Skip tables where all cells are empty after padding
+        flat_cells = [cell for row in padded_rows for cell in row]
+        if all(cell.strip() == '' for cell in flat_cells):
+            continue
+
+        # Generate default column names like col_0, col_1, ...
+        columns = [f"col_{i}" for i in range(max_len)]
+        df = pd.DataFrame(padded_rows, columns=columns)
+
+        # Optional: skip if table is just headers
+        if df.dropna(how="all").shape[0] <= 1:
+            continue
+
+        tables.append(df)
+
+    return tables
+
+
+
+
+
+
 # Function to do the actual retrieval of the nasdaq 100 company filings
-def filing_retrievals(filtered_filings, cik_stripped, output_dir):
-    for _, row in filtered_filings.iterrows():
+def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type):
+    for _, row in filtered_filings.iterrows(): #for each filings, download their htm if doesnt exist yet, extract tables from it always, save to tables_extracted folder, convert to pdf if nonexistant
         file_name = row.primaryDocument
         access_number = row.accessionNumber.replace("-", "")
         html_path = os.path.join(output_dir, f"{cik_stripped}_{file_name}") 
         pdf_path = html_path + ".pdf"
 
         try:
+            if not os.path.exists(html_path):
+                # Download and save HTML only if it doesn't exist
+                filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_stripped}/{access_number}/{file_name}"
+                req_content = requests.get(filing_url, headers=headers).content.decode("utf-8")
+                with open(html_path, "w", encoding="utf-8") as f:
+                    f.write(req_content)
+                html_content = req_content
+            else:
+                with open(html_path, "r", encoding="utf-8") as f:
+                    html_content = f.read()
+
+            # Extract and save tables regardless of whether PDF exists
+            tables = []
+            if form_type.upper() in ("10-K", "10-Q"):
+                tables = extract_html_tables(html_content)
+
+                form_output_dir = os.path.join("tables_extracted", form_type.upper())
+                os.makedirs(form_output_dir, exist_ok=True)
+
+                base_file_name = file_name.rsplit('.', 1)[0]
+                for i, table_df in enumerate(tables):
+                    output_file = f"{base_file_name}_table_{i}.json"
+                    output_path = os.path.join(form_output_dir, output_file)
+                    table_df.to_json(output_path, orient="records", lines=True, index=False)
+                    print(f"Saved table {i} from {file_name} to {form_output_dir}")
+            else:
+                print("No tables to be extracted from 8-K form")
+            if not tables:
+                print(f"No tables found in {file_name}")
+
+            # Skip PDF generation if already done
             if os.path.exists(pdf_path):
-                print(f"PDF already exists for {file_name}") # so that it doesn't re-download files
-                continue # exits the current 'for' loop iteration
+                print(f"PDF already exists for {file_name}")
+                continue
 
-            filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_stripped}/{access_number}/{file_name}"
-            req_content = requests.get(filing_url, headers=headers).content.decode("utf-8")
-
-            with open(html_path, "w", encoding="utf-8") as f:
-                f.write(req_content)
-
-            pdfkit.from_file(html_path, pdf_path, options={"quiet": ""})
+            # [Optional] PDF generation logic can go here if needed
+            else:
+                pdfkit.from_file(html_path, pdf_path, options={"quiet": ""})
 
         except Exception as e:
             print(f"Error with {file_name}: {e}")
 
+
+
+
 # Testing with only 2 for now since we might overload their servers LOL
-for cik in cik_list:
-    cik_padded = str(cik).zfill(10)
-    url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
+def download_filings(cik_list, output_dirs, headers, five_years_prior):
+    for cik in cik_list[41:99]:
+        cik_padded = str(cik).zfill(10)
+        url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json" #metadata of filings for this CIK
 
-    response = requests.get(url,headers=headers)
+        response = requests.get(url,headers=headers)
 
-    if response.status_code == 200:
-        data = response.json()
-        print(f"Data for CIK {cik_padded}")
+        if response.status_code == 200: #if succesful filter by recent, convert these recent to a dataframe
+            data = response.json()
+            print(f"Data for CIK {cik_padded}")
 
-        recent_filings = pd.DataFrame(data["filings"]["recent"])
-        recent_filings["filingDate"] = pd.to_datetime(recent_filings["filingDate"])
-        cik_stripped = str(int(cik))
+            recent_filings = pd.DataFrame(data["filings"]["recent"])
+            recent_filings["filingDate"] = pd.to_datetime(recent_filings["filingDate"])
+            cik_stripped = str(int(cik))
 
-        form_types = {"10-K": output_dirs[0], "10-Q": output_dirs[1], "8-K": output_dirs[2]} 
-        for form, output_dir in form_types.items():
-            filtered = recent_filings[(recent_filings["form"] == form) & (recent_filings["filingDate"] >= five_years_prior)]
+            form_types = {"10-K": output_dirs[0], "10-Q": output_dirs[1], "8-K": output_dirs[2]} 
+            for form, output_dir in form_types.items(): #filter df by form types and within 5 years prior
+                filtered = recent_filings[(recent_filings["form"] == form) & (recent_filings["filingDate"] >= five_years_prior)]
 
-            if filtered.empty:
-                print(f"No {form}s from the past 5 years for CIK {cik_padded}")
-                continue
+                if filtered.empty:
+                    print(f"No {form}s from the past 5 years for CIK {cik_padded}")
+                    continue
 
-            filing_retrievals(filtered, cik_stripped, output_dir)
-           
-    else:
-        print(f"Failed to fetch data for CIK{cik_padded} (status{response.status_code})")
+                filing_retrievals(filtered, cik_stripped, output_dir, form)
+            
+        else:
+            print(f"Failed to fetch data for CIK{cik_padded} (status{response.status_code})")
 
-    time.sleep(0.11) # time delay to reduce number of reqs to SEC EDGAR
+        time.sleep(0.11) # rate limits
 
 
+download_filings(cik_list, output_dirs, headers, five_years_prior)
