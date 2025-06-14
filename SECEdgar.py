@@ -8,9 +8,10 @@ import pdfkit
 import time
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
+import re
 
-os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
-print("Current Working Directory:", os.getcwd())
+# os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
+# print("Current Working Directory:", os.getcwd())
 
 # Opening the OG dataset with all companies in SEC EDGAR
 with open("company_tickers_exchange.json", "r") as f:
@@ -60,6 +61,16 @@ five_years_prior = datetime.now() - timedelta(5*365)
 
 
 
+
+REGEX_PATTERNS = { #dictionary of annotated keys
+    "date": r"\b\d{4}-\d{2}-\d{2}\b",
+    "currency": r"\$?-?\d{1,3}(?:,\d{3})*(?:\.\d+)?",
+    "percentage": r"\d+\.?\d*%",
+    "numeric": r"^-?\d+(?:,\d{3})*(?:\.\d+)?$",
+    "ticker": r"\b[A-Z]{1,5}\b"
+}
+
+
 def extract_html_tables(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     tables = []
@@ -68,7 +79,6 @@ def extract_html_tables(html_content):
         rows = []
         for tr in table.find_all('tr'):
             row = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-            # Skip rows where all cells are empty
             if any(cell.strip() for cell in row):
                 rows.append(row)
 
@@ -77,23 +87,39 @@ def extract_html_tables(html_content):
 
         max_len = max(len(row) for row in rows)
         padded_rows = [row + [''] * (max_len - len(row)) for row in rows]
-
-        # Skip tables where all cells are empty after padding
         flat_cells = [cell for row in padded_rows for cell in row]
         if all(cell.strip() == '' for cell in flat_cells):
             continue
 
-        # Generate default column names like col_0, col_1, ...
         columns = [f"col_{i}" for i in range(max_len)]
         df = pd.DataFrame(padded_rows, columns=columns)
 
-        # Optional: skip if table is just headers
         if df.dropna(how="all").shape[0] <= 1:
             continue
 
-        tables.append(df)
+        # Find closest non-empty <span> before and after the table
+        def get_closest_span(element, direction="prev"):
+            if direction == "prev":
+                spans = element.find_all_previous("span")
+            else:
+                spans = element.find_all_next("span")
+            for span in spans:
+                text = span.get_text(strip=True)
+                if text:
+                    return text
+            return ""
+
+        prev_span = get_closest_span(table, "prev")
+        next_span = get_closest_span(table, "next")
+
+        tables.append({
+            "table": df,
+            "prev_span": prev_span,
+            "next_span": next_span
+        })
 
     return tables
+
 
 
 
@@ -125,14 +151,42 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type):
             if form_type.upper() in ("10-K", "10-Q"):
                 tables = extract_html_tables(html_content)
 
-                form_output_dir = os.path.join("tables_extracted", form_type.upper())
+                form_output_dir = os.path.join("tables_extracted", cik_stripped, form_type.upper())
                 os.makedirs(form_output_dir, exist_ok=True)
 
                 base_file_name = file_name.rsplit('.', 1)[0]
-                for i, table_df in enumerate(tables):
+                for i, table_info in enumerate(tables):
+                    # output_file = f"{base_file_name}_table_{i}.json"
+                    # output_path = os.path.join(form_output_dir, output_file)
+                    # table_df.to_json(output_path, orient="records", lines=True, index=False)  
+                    #remove everything until with open to revert to this ^
+
+
+                    table_df = table_info["table"]
+                    prev_span = table_info["prev_span"]
+                    next_span = table_info["next_span"]
+
+                    metadata = {
+                        "source_file": file_name,
+                        "company_cik": cik_stripped,
+                        "form_type": form_type,
+                        "table_index": i,
+                        "extraction_date": datetime.now().isoformat(),
+                        "column_headers": table_df.columns.tolist(),
+                        "prev_span": prev_span,
+                        "next_span": next_span
+                    }
+
+                    json_output = {
+                        "metadata": metadata,
+                        "data": table_df.to_dict(orient="records")
+                    }
+
                     output_file = f"{base_file_name}_table_{i}.json"
                     output_path = os.path.join(form_output_dir, output_file)
-                    table_df.to_json(output_path, orient="records", lines=True, index=False)
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        json.dump(json_output, f, indent=2)
+
                     print(f"Saved table {i} from {file_name} to {form_output_dir}")
             else:
                 print("No tables to be extracted from 8-K form")
@@ -156,7 +210,7 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type):
 
 # Testing with only 2 for now since we might overload their servers LOL
 def download_filings(cik_list, output_dirs, headers, five_years_prior):
-    for cik in cik_list[41:99]:
+    for cik in cik_list[:1]:
         cik_padded = str(cik).zfill(10)
         url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json" #metadata of filings for this CIK
 
