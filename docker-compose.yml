@@ -1,94 +1,56 @@
-networks:
-  milvus-net:
-    name: milvus-net
-    driver: bridge
 services:
   etcd:
-    networks: 
-      - milvus-net
-    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379
-    image: quay.io/coreos/etcd:v3.5.5
-    container_name: etcd
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.0
     environment:
-      - ALLOW_NONE_AUTHENTICATION=yes
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
-      - ETCD_QUOTA_BACKEND_BYTES=8589934592
-    ports:
-      - "2379:2379"
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
     volumes:
-      - etcd_data:/var/lib/etcd
-    healthcheck:
-      test: ["CMD", "etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
 
   minio:
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
-    container_name: minio
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2020-12-03T00-03-10Z
     environment:
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
     volumes:
-      - minio_data:/data
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
+    command: minio server /minio_data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
 
-  milvus:
-    networks:
-      - milvus-net
-    deploy:
-      resources:
-        limits:
-          memory: 8g
-          cpus: "4.0"
-    image: milvusdb/milvus:v2.5.13
-    container_name: milvus
-    depends_on:
-      etcd:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
+  standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.4.3
+    command: ["milvus", "run", "standalone"]
     environment:
-      - ETCD_ENDPOINTS=etcd:2379
-      - MINIO_ADDRESS=minio:9000
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
     ports:
       - "19530:19530"
-      - "9091:9091"
-    volumes:
-      - milvus_data:/var/lib/milvus
-    command: ["milvus", "run", "standalone"]
-
+    depends_on:
+      - "etcd"
+      - "minio"
+    
   neo4j:
-    image: neo4j:5
     container_name: neo4j
+    image: neo4j:5
     ports:
       - "7474:7474"
       - "7687:7687"
     environment:
       - NEO4J_AUTH=neo4j/password123
     volumes:
-      - neo4j_data:/data
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/neo4j:/data
 
-volumes:
-  etcd_data:
-  minio_data:
-  milvus_data:
-  neo4j_data:
-
-
-
-  #NOTES
-  # Neo4j works, input http://localhost:7474 to access the db (password = password123)
-  # Milvus is the only one that currently doesn't work
-  # I manually allowed Port 2379, 2380, and 19530 in Firewall
-  # Allowing those ports access keeps Milvus running for a while but it still doesn't properly execute the connectiontest.py file
-  # If I didn't allow those ports, Milvus would crash shortly after running the 'docker-compose up -d' command
+networks:
+  default:
+    name: milvus
