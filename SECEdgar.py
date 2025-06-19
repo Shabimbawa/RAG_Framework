@@ -68,72 +68,70 @@ for dir_name in output_dirs:
 # Logic for data from the past 5 years
 five_years_prior = datetime.now() - timedelta(5*365)
 
-
-
-
-REGEX_PATTERNS = { #dictionary of annotated keys
-    "date": r"\b\d{4}-\d{2}-\d{2}\b",
-    "currency": r"\$?-?\d{1,3}(?:,\d{3})*(?:\.\d+)?",
-    "percentage": r"\d+\.?\d*%",
-    "numeric": r"^-?\d+(?:,\d{3})*(?:\.\d+)?$",
-    "ticker": r"\b[A-Z]{1,5}\b"
-}
-
-
 def extract_html_tables(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     tables = []
 
-    for table in soup.find_all('table'):
-        rows = []
-        for tr in table.find_all('tr'):
-            row = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-            if any(cell.strip() for cell in row):
-                rows.append(row)
+    # Pattern for section headers, case don't matter.
+    item_regex = re.compile(r'ITEM\s+(\d+[A-Z]?)\.?\s*[:\-]?\s*(.*)', re.IGNORECASE)
 
-        if not rows:
-            continue
+    current_section = None
 
-        max_len = max(len(row) for row in rows)
-        padded_rows = [row + [''] * (max_len - len(row)) for row in rows]
-        flat_cells = [cell for row in padded_rows for cell in row]
-        if all(cell.strip() == '' for cell in flat_cells):
-            continue
+    # Search entire doc
+    for tag in soup.find_all(["span", "table"]):
+        text = tag.get_text(strip=True)
 
-        columns = [f"col_{i}" for i in range(max_len)]
-        df = pd.DataFrame(padded_rows, columns=columns)
+        # Update current section if this is an "Item X" header
+        match = item_regex.search(text)
+        if match:
+            number = match.group(1)
+            title = match.group(2)
+            current_section = f"Item {number}: {title}" if title else f"Item {number}"
 
-        if df.dropna(how="all").shape[0] <= 1:
-            continue
+        # If table, extract and associate with current section
+        if tag.name == "table":
+            rows = []
+            for tr in tag.find_all('tr'):
+                row = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+                if any(cell.strip() for cell in row):
+                    rows.append(row)
 
-        # Find closest non-empty <span> before and after the table
-        def get_closest_span(element, direction="prev"):
-            if direction == "prev":
-                spans = element.find_all_previous("span")
-            else:
-                spans = element.find_all_next("span")
-            for span in spans:
-                text = span.get_text(strip=True)
-                if text:
-                    return text
-            return ""
+            if not rows:
+                continue
 
-        prev_span = get_closest_span(table, "prev")
-        next_span = get_closest_span(table, "next")
+            max_len = max(len(row) for row in rows)
+            padded_rows = [row + [''] * (max_len - len(row)) for row in rows]
+            flat_cells = [cell for row in padded_rows for cell in row]
+            if all(cell.strip() == '' for cell in flat_cells):
+                continue
 
-        tables.append({
-            "table": df,
-            "prev_span": prev_span,
-            "next_span": next_span
-        })
+            df = pd.DataFrame(padded_rows, columns=[f"col_{i}" for i in range(max_len)])
+            if df.dropna(how="all").shape[0] <= 1:
+                continue
+
+            # Get prev and succeeding span for table context
+            def get_closest_span(element, direction="prev"):
+                if direction == "prev":
+                    spans = element.find_all_previous("span")
+                else:
+                    spans = element.find_all_next("span")
+                for span in spans:
+                    text = span.get_text(strip=True)
+                    if text:
+                        return text
+                return ""
+
+            prev_span = get_closest_span(tag, "prev")
+            next_span = get_closest_span(tag, "next")
+
+            tables.append({
+                "table": df,
+                "prev_span": prev_span,
+                "next_span": next_span,
+                "section_header": current_section or "Unknown"
+            })
 
     return tables
-
-
-
-
-
-
 
 # Function to do the actual retrieval of the nasdaq 100 company filings
 def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, ticker):
@@ -174,6 +172,7 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
                     table_df = table_info["table"]
                     prev_span = table_info["prev_span"]
                     next_span = table_info["next_span"]
+                    section_header = table_info.get("section_header", "Unknown")
 
                     metadata = {
                         "source_file": file_name,
@@ -182,8 +181,10 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
                         "company_ticker": ticker,
                         "table_index": i,
                         "extraction_date": datetime.now().isoformat(),
+                        "column_headers": table_df.columns.tolist(),
+                        "section_header": section_header,
                         "prev_span": prev_span,
-                        "next_span": next_span
+                        "next_span": next_span,
                     }
 
                     json_output = {
@@ -213,8 +214,6 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
 
         except Exception as e:
             print(f"Error with {file_name}: {e}")
-
-
 
 
 # Testing with only 2 for now since we might overload their servers LOL

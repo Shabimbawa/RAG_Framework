@@ -2,6 +2,8 @@ tables_extracted/
 8-k_documents/
 10-k_documents/
 10-q_documents/
+finnhub_news/
+volumes/
 chunked_dense/
 chunked_sparse/
 embedded_sparse_bm25/
