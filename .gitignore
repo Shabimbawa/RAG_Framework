@@ -2,3 +2,9 @@ tables_extracted/
 8-k_documents/
 10-k_documents/
 10-q_documents/
+chunked_dense/
+chunked_sparse/
+embedded_sparse_bm25/
+embedded_dense_finbert/
+extracted_texts/
+__pycache__/

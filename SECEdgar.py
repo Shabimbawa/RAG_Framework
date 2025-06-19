@@ -9,9 +9,18 @@ import time
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import re
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from rank_bm25 import BM25Okapi
+from nltk.tokenize import word_tokenize
+import torch
+from sentence_transformers import SentenceTransformer
+import nltk
+#nltk.download("punkt")  needed to be run once only
 
-# os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
-# print("Current Working Directory:", os.getcwd())
+
+
+os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
+print("Current Working Directory:", os.getcwd())
 
 # Opening the OG dataset with all companies in SEC EDGAR
 with open("company_tickers_exchange.json", "r") as f:
@@ -127,7 +136,7 @@ def extract_html_tables(html_content):
 
 
 # Function to do the actual retrieval of the nasdaq 100 company filings
-def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type):
+def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, ticker):
     for _, row in filtered_filings.iterrows(): #for each filings, download their htm if doesnt exist yet, extract tables from it always, save to tables_extracted folder, convert to pdf if nonexistant
         file_name = row.primaryDocument
         access_number = row.accessionNumber.replace("-", "")
@@ -170,9 +179,9 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type):
                         "source_file": file_name,
                         "company_cik": cik_stripped,
                         "form_type": form_type,
+                        "company_ticker": ticker,
                         "table_index": i,
                         "extraction_date": datetime.now().isoformat(),
-                        "column_headers": table_df.columns.tolist(),
                         "prev_span": prev_span,
                         "next_span": next_span
                     }
@@ -232,7 +241,9 @@ def download_filings(cik_list, output_dirs, headers, five_years_prior):
                     print(f"No {form}s from the past 5 years for CIK {cik_padded}")
                     continue
 
-                filing_retrievals(filtered, cik_stripped, output_dir, form)
+                ticker = data.get("tickers", [""])[0] if "tickers" in data else ""
+                filing_retrievals(filtered, cik_stripped, output_dir, form, ticker)
+
             
         else:
             print(f"Failed to fetch data for CIK{cik_padded} (status{response.status_code})")
@@ -240,4 +251,304 @@ def download_filings(cik_list, output_dirs, headers, five_years_prior):
         time.sleep(0.11) # rate limits
 
 
-download_filings(cik_list, output_dirs, headers, five_years_prior)
+#download_filings(cik_list, output_dirs, headers, five_years_prior)
+
+
+
+
+def extract_and_save_spans(base_path=".", input_folders=["10-k_documents", "10-q_documents", "8-k_documents"]):
+    output_base = os.path.join(base_path, "extracted_texts")
+    os.makedirs(output_base, exist_ok=True)
+
+    for folder in input_folders:
+        input_dir = os.path.join(base_path, folder)
+
+        if not os.path.exists(input_dir):
+            print(f"Folder not found: {input_dir}")
+            continue
+
+        form_type = folder.replace("_documents", "").lower() + "-texts"
+        form_output_dir = os.path.join(output_base, form_type)
+        os.makedirs(form_output_dir, exist_ok=True)
+
+        print(f"\nProcessing folder: {input_dir}")
+
+        files = sorted(os.listdir(input_dir))
+        for file in files:  # You can change back to `files[:1]` to limit
+            if not file.endswith(".htm") and not file.endswith(".html"):
+                continue
+
+            # Parse ticker from filename
+            try:
+                base_name = os.path.splitext(file)[0]
+                if "_" in base_name:
+                    ticker = base_name.split("_")[1].split("-")[0].lower()
+                else:
+                    ticker = base_name.split("-")[0].lower()
+
+            except IndexError:
+                print(f"Could not parse ticker from filename: {file}")
+                continue
+
+            ticker_output_dir = os.path.join(form_output_dir, ticker)
+            os.makedirs(ticker_output_dir, exist_ok=True)
+
+            file_path = os.path.join(input_dir, file)
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    soup = BeautifulSoup(f, "html.parser")
+
+                # Remove all tables
+                for table in soup.find_all("table"):
+                    table.decompose()
+
+                # Extract all non-empty span text
+                span_texts = [span.get_text(strip=True) for span in soup.find_all("span") if span.get_text(strip=True)]
+
+                # Save as text file
+                output_file = os.path.splitext(file)[0] + ".txt"
+                output_path = os.path.join(ticker_output_dir, output_file)
+
+                with open(output_path, "w", encoding="utf-8") as out_f:
+                    out_f.write("\n".join(span_texts))
+
+                print(f"Saved: {output_file} ({len(span_texts)} spans) to {ticker_output_dir}")
+
+            except Exception as e:
+                print(f"Error processing {file}: {e}")
+
+
+#extract_and_save_spans()
+
+
+
+def segment_dense(base_path=".", input_folders=["10-k_documents", "10-q_documents", "8-k_documents"]):
+    segment_config(
+        base_path=base_path,
+        input_folders=input_folders,
+        output_folder="chunked_dense",
+        chunk_size=2048,      # ~512 tokens
+        chunk_overlap=512
+    )
+
+
+def segment_sparse(base_path=".", input_folders=["10-k_documents", "10-q_documents", "8-k_documents"]):
+    segment_config(
+        base_path=base_path,
+        input_folders=input_folders,
+        output_folder="chunked_sparse",
+        chunk_size=1024,     # ~256 tokens
+        chunk_overlap=256
+    )
+
+
+def segment_config(base_path, input_folders, output_folder, chunk_size, chunk_overlap):
+    input_base = os.path.join(base_path, "extracted_texts")
+    output_base = os.path.join(base_path, output_folder)
+    os.makedirs(output_base, exist_ok=True)
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap
+    )
+
+    for folder in input_folders:
+        form_type = folder.replace("_documents", "").lower() + "-texts"
+        input_dir = os.path.join(input_base, form_type)
+
+        if not os.path.exists(input_dir):
+            print(f"Input folder not found: {input_dir}")
+            continue
+
+        output_form_dir = os.path.join(output_base, form_type)
+        os.makedirs(output_form_dir, exist_ok=True)
+
+        print(f"\nProcessing {form_type}...")
+
+        for ticker in sorted(os.listdir(input_dir)):  # limit to first ticker
+            ticker_input_dir = os.path.join(input_dir, ticker)
+            if not os.path.isdir(ticker_input_dir):
+                continue
+
+            ticker_output_dir = os.path.join(output_form_dir, ticker)
+            os.makedirs(ticker_output_dir, exist_ok=True)
+
+            for file in sorted(os.listdir(ticker_input_dir)):  # limit to first 3 files
+                if not file.endswith(".txt"):
+                    continue
+
+                file_path = os.path.join(ticker_input_dir, file)
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        full_text = f.read()
+
+                    chunks = splitter.split_text(full_text)
+                    chunk_objects = []
+                    char_pointer = 0
+
+                    for i, chunk in enumerate(chunks):
+                        start = full_text.find(chunk, char_pointer)
+                        end = start + len(chunk)
+                        char_pointer = end  # move pointer forward
+
+                        chunk_objects.append({
+                            "chunk_id": i + 1,
+                            "content": chunk,
+                            "start_index": start,
+                            "end_index": end,
+                            "source_file": file,
+                            "ticker": ticker,
+                            "form_type": form_type.replace("-texts", "")  
+                        })
+
+                    output_filename = os.path.splitext(file)[0] + "_chunks.json"
+                    output_path = os.path.join(ticker_output_dir, output_filename)
+
+                    with open(output_path, "w", encoding="utf-8") as json_file:
+                        json.dump(chunk_objects, json_file, indent=2, ensure_ascii=False)
+
+                    print(f"Chunked and saved: {file} -> {len(chunks)} chunks")
+
+                except Exception as e:
+                    print(f"Error processing {file_path}: {e}")
+
+#segment_dense()
+#segment_sparse()
+
+
+def embed_chunks_bm25(base_path=".", input_folder="chunked_sparse", output_folder="embedded_sparse_bm25"):
+    input_base = os.path.join(base_path, input_folder)
+    output_base = os.path.join(base_path, output_folder)
+    os.makedirs(output_base, exist_ok=True)
+
+    for form_type in os.listdir(input_base):
+        form_input_dir = os.path.join(input_base, form_type)
+        form_output_dir = os.path.join(output_base, form_type)
+        os.makedirs(form_output_dir, exist_ok=True)
+
+        for ticker in os.listdir(form_input_dir):
+            ticker_input_dir = os.path.join(form_input_dir, ticker)
+            ticker_output_dir = os.path.join(form_output_dir, ticker)
+            os.makedirs(ticker_output_dir, exist_ok=True)
+
+            for file in sorted(os.listdir(ticker_input_dir)):
+                output_file = file.replace("_chunks.json", "_embedded.json")
+                output_path = os.path.join(ticker_output_dir, output_file)
+                if os.path.exists(output_path):
+                    print(f"Skipping (already embedded): {file}")
+                    continue
+                if not file.endswith("_chunks.json"):
+                    continue
+
+                file_path = os.path.join(ticker_input_dir, file)
+                with open(file_path, "r", encoding="utf-8") as f:
+                    chunks = json.load(f)
+
+                tokenized_corpus = [word_tokenize(c["content"].lower(), preserve_line=True) for c in chunks]
+
+                bm25 = BM25Okapi(tokenized_corpus)
+
+                embedded = []
+                for i, chunk in enumerate(chunks):
+                    tokens = tokenized_corpus[i]
+                    scores = bm25.get_scores(tokens)
+                    embedded.append({
+                        "chunk_id": chunk["chunk_id"],
+                        "bm25_scores": list(scores),
+                        "metadata": {
+                            "source_file": chunk["source_file"],
+                            "ticker": chunk["ticker"],
+                            "form_type": chunk["form_type"],
+                            "start_index": chunk["start_index"],
+                            "end_index": chunk["end_index"]
+                        }
+                    })
+
+
+                with open(output_path, "w", encoding="utf-8") as out:
+                    json.dump(embedded, out, indent=2, ensure_ascii=False)
+
+                print(f"BM25 embedded: {file} -> {len(embedded)} chunks")
+
+
+def embed_chunks_finbert(base_path=".", input_folder="chunked_dense", output_folder="embedded_dense_finbert", batch_size=256):
+
+    # Create output directories
+    input_base = os.path.join(base_path, input_folder)
+    output_base = os.path.join(base_path, output_folder)
+    os.makedirs(output_base, exist_ok=True)
+
+    # Load model with optimizations
+    model = SentenceTransformer("yiyanghkust/finbert-tone")
+    
+    # FP16 conversion and GPU acceleration
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = model.half().to(device) if device == "cuda" else model
+
+    # Process each filing type (10-K, 10-Q, etc.)
+    for form_type in os.listdir(input_base):
+        form_input_dir = os.path.join(input_base, form_type)
+        form_output_dir = os.path.join(output_base, form_type)
+        os.makedirs(form_output_dir, exist_ok=True)
+
+        # Process each company (ticker)
+        for ticker in os.listdir(form_input_dir)[:1]:
+            ticker_input_dir = os.path.join(form_input_dir, ticker)
+            ticker_output_dir = os.path.join(form_output_dir, ticker)
+            os.makedirs(ticker_output_dir, exist_ok=True)
+
+            # Process each chunk file
+            for file in sorted(os.listdir(ticker_input_dir))[:3]:
+                if not file.endswith("_chunks.json"):
+                    continue
+
+                file_path = os.path.join(ticker_input_dir, file)
+                with open(file_path, "r", encoding="utf-8") as f:
+                    chunks = json.load(f)
+
+                texts = [chunk["content"] for chunk in chunks]
+                
+                # Generate embeddings with optimizations
+                embeddings = model.encode(
+                    texts,
+                    batch_size=batch_size,
+                    convert_to_numpy=True,
+                    show_progress_bar=True,
+                    convert_to_tensor=True,
+                    device=device
+                )
+
+                # Prepare embedded data structure
+                embedded = []
+                for chunk, emb in zip(chunks, embeddings):
+                    # Convert tensor to list if needed
+                    if hasattr(emb, 'cpu'):
+                        emb = emb.cpu().numpy().tolist()
+                    else:
+                        emb = emb.tolist()
+                        
+                    embedded.append({
+                        "chunk_id": chunk["chunk_id"],
+                        "embedding": emb,
+                        "metadata": {
+                            "source_file": chunk.get("source_file", ""),
+                            "ticker": chunk.get("ticker", ""),
+                            "form_type": chunk.get("form_type", ""),
+                            "start_index": chunk.get("start_index", None),
+                            "end_index": chunk.get("end_index", None)
+                        }
+                    })
+
+                # Save results
+                output_file = file.replace("_chunks.json", "_embedded.json")
+                output_path = os.path.join(ticker_output_dir, output_file)
+                with open(output_path, "w", encoding="utf-8") as out:
+                    json.dump(embedded, out, indent=2, ensure_ascii=False)
+
+                print(f"FinBERT embedded: {file} -> {len(embedded)} chunks")
+
+    print("Embedding process completed.")
+
+
+embed_chunks_bm25()
+#embed_chunks_finbert()
