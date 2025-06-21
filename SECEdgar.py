@@ -549,5 +549,5 @@ def embed_chunks_finbert(base_path=".", input_folder="chunked_dense", output_fol
     print("Embedding process completed.")
 
 
-embed_chunks_bm25()
-#embed_chunks_finbert()
+#embed_chunks_bm25()
+embed_chunks_finbert()

@@ -1,0 +1,54 @@
+import random
+import requests
+from datasets import load_dataset
+
+
+ds = load_dataset("intfloat/query2doc_msmarco", split="train")
+
+
+
+PERPLEXITY_API_KEY = "Calamansi nIGGa"
+
+def expand_query(query, k=4, model="sonar-pro"):
+    few_shot_examples = random.sample(list(ds), k)
+    
+    prompt = "Write a passage that answers the given query:\n\n"
+    for example in few_shot_examples:
+        prompt += f"Q: {example['query']}\nA: {example['pseudo_doc']}\n\n"
+    prompt += f"Q: {query}\nA:"
+
+    url = "https://api.perplexity.ai/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are asked to write a passage that answers the given query. Do not ask the user for clarification."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 1.0,
+        "max_tokens": 128
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        print("Error details:", response.text)
+        raise
+    result = response.json()
+    return result["choices"][0]["message"]["content"].strip()
+
+query = "what is apple"
+psuedo_doc= expand_query(query)
+
+
+def sparse_formatting(og_query, pseudo_doc, n = 5):
+    return " ".join([og_query] * n) + " " + pseudo_doc
+    #tokenize using word_tokenizer then use bm25 to compare in milvus
+
+# Dense Retrieval Format
+def dense_formatting(og_query, pseudo_doc):
+    return og_query + " [SEP] " + pseudo_doc
+
