@@ -44,10 +44,12 @@ def embed_chunks_allMiniLM (base_path=".", input_folder="chunked_dense", output_
                 # FIXED: Create list of entries instead of dictionary-of-lists
                 entries = []
                 for chunk, emb in zip(chunks, embeddings):
+                    chunked_filename = file
                     entry = {
                         "embedding": emb.tolist(),
                         "metadata": {
-                            "source_file": chunk.get("source_file", ""),
+                            "chunk_id": chunk.get("chunk_id", ""),
+                            "source_file": chunked_filename,
                             "ticker": chunk.get("ticker", ""),
                             "form_type": chunk.get("form_type", ""),
                             "start_index": chunk.get("start_index", -1),

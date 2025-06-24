@@ -24,13 +24,14 @@ def insert_dense_embedding_milvus():
             FieldSchema(name="source_file", dtype=DataType.VARCHAR, max_length=512),
             FieldSchema(name="ticker", dtype=DataType.VARCHAR, max_length=32),
             FieldSchema(name="form_type", dtype=DataType.VARCHAR, max_length=16),
+            FieldSchema(name="chunk_id", dtype=DataType.INT64),
             FieldSchema(name="start_index", dtype=DataType.INT64),
             FieldSchema(name="end_index", dtype=DataType.INT64)
         ]
 
         schema = CollectionSchema(fields, description="Dense MiniLM Embeddings")
         collection = Collection(name=COLLECTION_NAME, schema=schema)
-        #print(f"Created collection: {COLLECTION_NAME}")
+        print(f"Created collection: {COLLECTION_NAME}")
         
         # create index immediately after collection creation
         index_params = {
@@ -39,7 +40,7 @@ def insert_dense_embedding_milvus():
             "params": {"M": 8, "efConstruction": 64}
         }
         collection.create_index(field_name="dense_vector", index_params=index_params)
-        #print("Index created.")
+        print("Index created.")
         
         time.sleep(5)  # allow time for index creation
     else:
@@ -48,7 +49,7 @@ def insert_dense_embedding_milvus():
 
     # load collection
     collection.load()
-    #print("Collection loaded.")
+    print("Collection loaded.")
 
     # read embedded json files
     all_embeddings = []
@@ -77,6 +78,7 @@ def insert_dense_embedding_milvus():
     source_files = []
     tickers = []
     form_types = []
+    chunk_ids = []
     start_indices = []
     end_indices = []
 
@@ -97,6 +99,7 @@ def insert_dense_embedding_milvus():
         source_files.append(metadata.get("source_file", ""))
         tickers.append(metadata.get("ticker", ""))
         form_types.append(metadata.get("form_type", ""))
+        chunk_ids.append(metadata.get("chunk_id", ""))
         start_indices.append(metadata.get("start_index", -1))
         end_indices.append(metadata.get("end_index", -1))
 
@@ -106,12 +109,41 @@ def insert_dense_embedding_milvus():
         vectors,           
         source_files,      
         tickers,           
-        form_types,        
+        form_types, 
+        chunk_ids,       
         start_indices,     
         end_indices        
     ])
 
     print(f"Inserted {len(vectors)} dense vectors into collection '{COLLECTION_NAME}'.")
+
+
+def fetch_text(metadata):
+    try:
+        form_type = metadata.get("form_type", "")
+        ticker = metadata.get("ticker", "")
+        source_file = metadata.get("source_file", "")
+
+        base_dir = "chunked_dense"
+
+        form_dir = f"{form_type}-texts" if form_type else ""
+
+        chunk_dir = os.path.join(base_dir, form_dir, ticker.lower())
+        chunk_file  = os.path.join(chunk_dir, source_file)
+
+        with open(chunk_file, 'r', encoding="utf-8") as f:
+            chunks = json.load(f)
+        
+        chunk_id = metadata.get("chunk_id", "")
+        for chunk in chunks:
+            if str(chunk.get("chunk_id", "")) == str(chunk_id):
+                return chunk.get("content", "")
+        
+        return "Chunk not found"
+    except FileNotFoundError:
+        return f"File not found: {chunk_file}"
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 
 def retrieval_test():
@@ -137,7 +169,7 @@ def retrieval_test():
         anns_field="dense_vector",
         param=search_params,
         limit=TOP_K,
-        output_fields=["source_file", "ticker", "form_type", "start_index", "end_index"]
+        output_fields=["source_file", "ticker", "form_type", "chunk_id", "start_index", "end_index"]
     )
 
     if not results:
@@ -149,12 +181,13 @@ def retrieval_test():
 
     for i, hit in enumerate(results[0]):
         entity = hit.entity
-        print(f"Result #{i+1} (Score: {hit.score:.4f})")
-        print(f"Source: {entity.get('source_file', 'N/A')}")
-        print(f"Ticker: {entity.get('ticker', 'N/A')}")
-        print(f"Form: {entity.get('form_type', 'N/A')}")
-        print(f"Location: Chunk {entity.get('start_index', '?')}-{entity.get('end_index', '?')}")
-        print("-" * 80)
+        text_chunk = fetch_text({
+            "form_type": entity.get("form_type", ""),
+            "ticker": entity.get("ticker", ""),
+            "source_file": entity.get("source_file", ""),
+            "chunk_id": entity.get("chunk_id", "")
+        })
+        print(f"Result #{i+1}: {text_chunk[:200]}...")
 
 #insert_dense_embedding_milvus()
 retrieval_test()
