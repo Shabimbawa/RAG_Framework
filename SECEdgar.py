@@ -18,10 +18,6 @@ import nltk
 #nltk.download("punkt")  needed to be run once only
 
 
-
-os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
-print("Current Working Directory:", os.getcwd())
-
 # Opening the OG dataset with all companies in SEC EDGAR
 with open("company_tickers_exchange.json", "r") as f:
     CIK_dict = json.load(f)
@@ -72,10 +68,13 @@ def extract_html_tables(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     tables = []
 
-    # Pattern for section headers, case don't matter.
+    #Pattern for section headers, case don't matter.
     item_regex = re.compile(r'ITEM\s+(\d+[A-Z]?)\.?\s*[:\-]?\s*(.*)', re.IGNORECASE)
 
     current_section = None
+
+    def clean_text(text):
+        return text.replace('\xa0', ' ').strip()
 
     # Search entire doc
     for tag in soup.find_all(["span", "table"]):
@@ -88,12 +87,11 @@ def extract_html_tables(html_content):
             title = match.group(2)
             current_section = f"Item {number}: {title}" if title else f"Item {number}"
 
-        # If table, extract and associate with current section
         if tag.name == "table":
             rows = []
-            for tr in tag.find_all('tr'):
-                row = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-                if any(cell.strip() for cell in row):
+            for tr in tag.find_all("tr"):
+                row = [clean_text(td.get_text()) for td in tr.find_all(["td", "th"])]
+                if any(cell.strip() for cell in row):  # skip fully blank rows
                     rows.append(row)
 
             if not rows:
@@ -101,22 +99,33 @@ def extract_html_tables(html_content):
 
             max_len = max(len(row) for row in rows)
             padded_rows = [row + [''] * (max_len - len(row)) for row in rows]
-            flat_cells = [cell for row in padded_rows for cell in row]
-            if all(cell.strip() == '' for cell in flat_cells):
+
+            # Skip empty tables
+            if all(cell.strip() == '' for row in padded_rows for cell in row):
                 continue
 
-            df = pd.DataFrame(padded_rows, columns=[f"col_{i}" for i in range(max_len)])
+            # Use first row as header if it looks like one (all short cells)
+            first_row = padded_rows[0]
+            is_header_row = all(len(cell) < 40 for cell in first_row)
+
+            if is_header_row:
+                column_headers = [
+                    col.strip() if col.strip() else f"col_{i}"
+                    for i, col in enumerate(first_row)
+                ]
+                data_rows = padded_rows[1:]
+                df = pd.DataFrame(data_rows, columns=column_headers)
+            else:
+                df = pd.DataFrame(padded_rows, columns=[f"col_{i}" for i in range(max_len)])
+
             if df.dropna(how="all").shape[0] <= 1:
                 continue
 
-            # Get prev and succeeding span for table context
+            # Get closest span text for context
             def get_closest_span(element, direction="prev"):
-                if direction == "prev":
-                    spans = element.find_all_previous("span")
-                else:
-                    spans = element.find_all_next("span")
+                spans = element.find_all_previous("span") if direction == "prev" else element.find_all_next("span")
                 for span in spans:
-                    text = span.get_text(strip=True)
+                    text = clean_text(span.get_text())
                     if text:
                         return text
                 return ""
@@ -128,7 +137,9 @@ def extract_html_tables(html_content):
                 "table": df,
                 "prev_span": prev_span,
                 "next_span": next_span,
-                "section_header": current_section or "Unknown"
+                "section_header": current_section or "Unknown",
+                "num_rows": len(padded_rows),
+                "num_cols": max_len
             })
 
     return tables
@@ -174,6 +185,18 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
                     next_span = table_info["next_span"]
                     section_header = table_info.get("section_header", "Unknown")
 
+                    column_headers = [
+                        col.strip() if col.strip() else f"col_{i}"
+                        for i, col in enumerate(table_df.columns)
+                    ]
+                    table_df.columns = column_headers
+
+                    # Remove empty string values from rows
+                    cleaned_data = [
+                        {k: v for k, v in row.items() if str(v).strip() != ""}
+                        for row in table_df.to_dict(orient="records")
+                    ]
+
                     metadata = {
                         "source_file": file_name,
                         "company_cik": cik_stripped,
@@ -181,7 +204,7 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
                         "company_ticker": ticker,
                         "table_index": i,
                         "extraction_date": datetime.now().isoformat(),
-                        "column_headers": table_df.columns.tolist(),
+                        "column_headers": column_headers,
                         "section_header": section_header,
                         "prev_span": prev_span,
                         "next_span": next_span,
@@ -189,7 +212,7 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
 
                     json_output = {
                         "metadata": metadata,
-                        "data": table_df.to_dict(orient="records")
+                        "data": cleaned_data
                     }
 
                     output_file = f"{base_file_name}_table_{i}.json"
@@ -250,9 +273,7 @@ def download_filings(cik_list, output_dirs, headers, five_years_prior):
         time.sleep(0.11) # rate limits
 
 
-#download_filings(cik_list, output_dirs, headers, five_years_prior)
-
-
+download_filings(cik_list, output_dirs, headers, five_years_prior)
 
 
 def extract_and_save_spans(base_path=".", input_folders=["10-k_documents", "10-q_documents", "8-k_documents"]):
@@ -318,8 +339,6 @@ def extract_and_save_spans(base_path=".", input_folders=["10-k_documents", "10-q
 
 
 #extract_and_save_spans()
-
-
 
 def segment_dense(base_path=".", input_folders=["10-k_documents", "10-q_documents", "8-k_documents"]):
     segment_config(
@@ -550,4 +569,4 @@ def embed_chunks_finbert(base_path=".", input_folder="chunked_dense", output_fol
 
 
 #embed_chunks_bm25()
-embed_chunks_finbert()
+#embed_chunks_finbert()
