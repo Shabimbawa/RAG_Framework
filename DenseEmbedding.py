@@ -2,24 +2,26 @@ import os
 import json
 import torch
 from sentence_transformers import SentenceTransformer
+os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
 
 def embed_chunks_allMiniLM (base_path=".", input_folder="chunked_dense", output_folder="embedded_dense_allMini", batch_size=256):
     input_base = os.path.join(base_path, input_folder)
     output_base = os.path.join(base_path, output_folder)
     os.makedirs(output_base, exist_ok=True)
 
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    model = SentenceTransformer('all-MiniLM-L6-v2') 
+
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     model = model.to(device)
 
-    for form_type in os.listdir(input_base):
+    for form_type in sorted(os.listdir(input_base))[0:1]:
         form_input_dir = os.path.join(input_base, form_type)
         form_output_dir = os.path.join(output_base, form_type)
         os.makedirs(form_output_dir, exist_ok=True)
 
-        for ticker in os.listdir(form_input_dir):
+        for ticker in sorted(os.listdir(form_input_dir))[:1]:
             ticker_input_dir = os.path.join(form_input_dir, ticker)
             ticker_output_dir = os.path.join(form_output_dir, ticker)
             os.makedirs(ticker_output_dir, exist_ok=True)
@@ -63,7 +65,7 @@ def embed_chunks_allMiniLM (base_path=".", input_folder="chunked_dense", output_
                 with open(output_path, "w", encoding="utf-8") as out:
                     json.dump(entries, out, indent=2, ensure_ascii=False)
                 
-                print(f"Embedded: {file} → {len(embeddings)} vectors")
+                print(f"Embedded: {file} -> {len(embeddings)} vectors")
 
     print("Embedding Complete")
 

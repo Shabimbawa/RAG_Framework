@@ -7,7 +7,7 @@ ds = load_dataset("intfloat/query2doc_msmarco", split="train")
 
 
 
-PERPLEXITY_API_KEY = "Calamansi nIGGa"
+PERPLEXITY_API_KEY = "ENV file"
 
 def expand_query(query, k=4, model="sonar-pro"):
     few_shot_examples = random.sample(list(ds), k)
@@ -40,15 +40,25 @@ def expand_query(query, k=4, model="sonar-pro"):
     result = response.json()
     return result["choices"][0]["message"]["content"].strip()
 
-query = "what is apple"
+query = "how many shares of common stock were issued and outstanding as of October 16, 2020"
 psuedo_doc= expand_query(query)
 
 
-def sparse_formatting(og_query, pseudo_doc, n = 5):
-    return " ".join([og_query] * n) + " " + pseudo_doc
-    #tokenize using word_tokenizer then use bm25 to compare in milvus
+def sparse_formatting(og_query, pseudo_doc, n=5):
+    result = " ".join([og_query] * n) + " " + pseudo_doc
+    
+    return result
 
 # Dense Retrieval Format
 def dense_formatting(og_query, pseudo_doc):
-    return og_query + " [SEP] " + pseudo_doc
+    result = og_query + " [SEP] " + pseudo_doc
+    
+    return result
 
+
+
+sparseQuery= sparse_formatting(query, psuedo_doc)
+denseQuery= dense_formatting(query, psuedo_doc)
+
+print(sparseQuery)
+print(denseQuery)

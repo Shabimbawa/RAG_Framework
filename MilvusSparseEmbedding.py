@@ -2,6 +2,7 @@ import os
 import json
 from pymilvus import MilvusClient, DataType, Function, FunctionType
 from tqdm import tqdm
+import csv
 os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
 COLLECTION_NAME = "sec_chunks_sparse"
 CHUNK_BASE_DIR = "chunked_sparse"
@@ -63,11 +64,11 @@ def load_chunks_from_folder(base_path):
         form_path = os.path.join(base_path, form_type)
         if not os.path.isdir(form_path): continue
 
-        for ticker in sorted(os.listdir(form_path))[:1]:
+        for ticker in sorted(os.listdir(form_path)):
             ticker_path = os.path.join(form_path, ticker)
             if not os.path.isdir(ticker_path): continue
 
-            for file in os.listdir(ticker_path)[:2]:
+            for file in os.listdir(ticker_path):
                 if file.endswith(".json"):
                     file_path = os.path.join(ticker_path, file)
                     try:
@@ -90,34 +91,11 @@ def load_chunks_from_folder(base_path):
     return docs
 
 
-docs = load_chunks_from_folder(CHUNK_BASE_DIR)
-print(f"Loaded {len(docs)} chunks.")
-
-if docs:
-    print(f"Inserting into '{COLLECTION_NAME}'...")
-    for i in tqdm(range(0, len(docs), 1000)):
-        batch = docs[i:i+1000]
-        client.insert(COLLECTION_NAME, batch)
-
-    print("Insertion complete.")
-else:
-    print(" No documents found to insert.")
-
+# docs = load_chunks_from_folder(CHUNK_BASE_DIR)
+# print(f"Loaded {len(docs)} chunks.")
 
 # if docs:
 #     print(f"Inserting into '{COLLECTION_NAME}'...")
-    
-#     # Invoke BM25 function to generate sparse vectors
-#     sparse_vectors = client.lookup_function(
-#         function_name="text_bm25_emb",
-#         input_data=[doc["text"] for doc in docs]
-#     )
-    
-#     # Add generated vectors to documents
-#     for i, doc in enumerate(docs):
-#         doc["sparse"] = sparse_vectors[i]
-
-#     # Insert documents with generated vectors
 #     for i in tqdm(range(0, len(docs), 1000)):
 #         batch = docs[i:i+1000]
 #         client.insert(COLLECTION_NAME, batch)
@@ -127,3 +105,26 @@ else:
 #     print(" No documents found to insert.")
 
 
+
+
+results = client.query(
+    collection_name=COLLECTION_NAME,
+    output_fields=["id", "ticker", "chunk_id", "text"],
+    limit=11000
+    
+)
+
+# Save to CSV
+csv_file = "milvus_results.csv"
+with open(csv_file, mode="w", newline="", encoding="utf-8") as file:
+    writer = csv.DictWriter(file, fieldnames=["id", "ticker", "chunk_id", "text"])
+    writer.writeheader()
+    writer.writerows(results)
+
+print(f" Results saved to {csv_file}")
+
+
+
+
+schema = client.describe_collection(COLLECTION_NAME)
+print(schema)

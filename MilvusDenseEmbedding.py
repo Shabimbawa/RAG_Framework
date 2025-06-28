@@ -4,8 +4,9 @@ import time
 import torch
 from sentence_transformers import SentenceTransformer
 from pymilvus import connections, FieldSchema, CollectionSchema, DataType, Collection, utility
+import csv
+os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
 
-# this is hard coded for Apple, have to make it dynamic pa pero shouldn't be that hard
 # <---------- CONFIGURATIONS ---------->
 COLLECTION_NAME = "dense_miniLM"
 EMBEDDED_DIR = "embedded_dense_allMini/10-k-texts/aapl"
@@ -178,6 +179,7 @@ def retrieval_test():
     
     print(f"\n Top {TOP_K} results for: '{QUERY}' \n")
     print("-" * 80)
+    csv_data = []
 
     for i, hit in enumerate(results[0]):
         entity = hit.entity
@@ -187,7 +189,28 @@ def retrieval_test():
             "source_file": entity.get("source_file", ""),
             "chunk_id": entity.get("chunk_id", "")
         })
+        snippet = text_chunk[:200]
         print(f"Result #{i+1}: {text_chunk[:200]}...")
 
-#insert_dense_embedding_milvus()
-retrieval_test()
+        csv_data.append({
+            "Rank": i + 1,
+            "Score": hit.distance,
+            "Ticker": entity.get("ticker", ""),
+            "Form Type": entity.get("form_type", ""),
+            "Source File": entity.get("source_file", ""),
+            "Chunk ID": entity.get("chunk_id", ""),
+            "Start Index": entity.get("start_index", ""),
+            "End Index": entity.get("end_index", ""),
+            "Text Snippet": snippet
+        })
+
+        with open("retrieval_results.csv", "w", newline="", encoding="utf-8") as csvfile:
+            fieldnames = ["Rank", "Score", "Ticker", "Form Type", "Source File", "Chunk ID", "Start Index", "End Index", "Text Snippet"]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(csv_data)
+
+        print("Results written to retrieval_results.csv")
+
+insert_dense_embedding_milvus()
+#retrieval_test()
