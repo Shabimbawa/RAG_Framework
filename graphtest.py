@@ -9,7 +9,7 @@ from neo4j import GraphDatabase, basic_auth
 URI = "bolt://localhost:7687"
 username = "neo4j"
 password = "password123"
-PERPLEXITY_API_KEY = "CHECK .ENV FILE"
+PERPLEXITY_API_KEY = "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"
 JSON_DIR = "tables_extracted/320193/10-K"
 
 chat = ChatPerplexity(
@@ -74,3 +74,11 @@ def execute_cypher(query, params=None):
 if __name__ == "__main__":
     process_json_files()
     driver.close()
+
+
+# def query_graph(cypher_query, parameters=None):
+#     with driver.session() as session:
+#         result = session.run(cypher_query, parameters or {})
+#         records = result.data()
+#     print(f"Query returned {len(records)} records.")
+#     return records

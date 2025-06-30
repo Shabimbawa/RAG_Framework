@@ -62,3 +62,8 @@ denseQuery= dense_formatting(query, psuedo_doc)
 
 print(sparseQuery)
 print(denseQuery)
+
+
+
+
+
