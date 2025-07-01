@@ -17,6 +17,8 @@ from sentence_transformers import SentenceTransformer
 import nltk
 #nltk.download("punkt")  needed to be run once only
 
+
+from originalTableExtraction import extract_html_tables
 os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
 
 # Opening the OG dataset with all companies in SEC EDGAR
@@ -65,7 +67,7 @@ for dir_name in output_dirs:
 # Logic for data from the past 5 years
 five_years_prior = datetime.now() - timedelta(5*365)
 
-def extract_html_tables(html_content):
+def extract_html_tables(html_content): 
     soup = BeautifulSoup(html_content, 'html.parser')
     tables = []
 
@@ -168,11 +170,27 @@ def extract_html_tables(html_content):
                 if is_header_row:
                     if not first_row[0]:
                         first_row[0] = "Category"
-                    column_headers = [
-                        col.strip() if col.strip() else f"col_{i}"
-                        for i, col in enumerate(first_row)
-                    ]
-                    data_rows = padded_rows[1:]
+                    # Shift headers left (remove empty strings between header values)
+                    shifted_header = [cell for cell in first_row if cell.strip()]
+                    num_cols = max(len(shifted_header), max(len(row) for row in padded_rows))
+
+                    # Fill missing header names
+                    while len(shifted_header) < num_cols:
+                        shifted_header.append(f"col_{len(shifted_header)}")
+
+
+
+                    column_headers = shifted_header
+
+                    # Align all data rows to same number of columns
+                    data_rows = []
+                    for row in padded_rows[1:]:
+                        # Shift row left to remove empty strings in between
+                        shifted_row = [cell for cell in row if cell.strip()]
+                        while len(shifted_row) < len(column_headers):
+                            shifted_row.append("")  # pad missing cols
+                        data_rows.append(shifted_row)
+
                     df = pd.DataFrame(data_rows, columns=column_headers)
                 else:
                     df = pd.DataFrame(padded_rows, columns=[f"col_{i}" for i in range(max_len)])
