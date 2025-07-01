@@ -67,7 +67,7 @@ for dir_name in output_dirs:
 # Logic for data from the past 5 years
 five_years_prior = datetime.now() - timedelta(5*365)
 
-def extract_html_tables(html_content): 
+def extract_html_tables(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     tables = []
 
@@ -91,25 +91,6 @@ def extract_html_tables(html_content):
                 merged.append(row[i])
         return merged
 
-    def is_dual_header(rows):
-        if len(rows) < 2:
-            return False
-        row1 = rows[0]
-        row2 = rows[1]
-        if any(cell.strip().startswith("$") for cell in row2):
-            return False
-
-        
-        return True 
-
-
-    def get_closest_span(element, direction="prev"):
-        spans = element.find_all_previous("span") if direction == "prev" else element.find_all_next("span")
-        for span in spans:
-            text = clean_text(span.get_text())
-            if text:
-                return text
-        return ""
     def merge_percent_cells(row):
         merged = []
         skip = False
@@ -119,15 +100,48 @@ def extract_html_tables(html_content):
                 continue
             current = row[i].strip()
             next_cell = row[i + 1].strip() if i + 1 < len(row) else ""
-
-            # If this is a number and next is '%', merge
             if re.match(r"^-?\(?\d+(\.\d+)?\)?$", current) and next_cell == "%":
                 merged.append(f"{current}%")
                 skip = True
             else:
                 merged.append(current)
         return merged
-    
+
+    def get_closest_span(element, direction="prev"):
+        spans = element.find_all_previous("span") if direction == "prev" else element.find_all_next("span")
+        for span in spans:
+            text = clean_text(span.get_text())
+            if text:
+                return text
+        return ""
+
+    def is_width_only_row(tr):
+        tds = tr.find_all("td")
+        return all(td.get("style", "").startswith("width") and not td.get_text(strip=True) for td in tds)
+
+    def get_table_header_and_data(tr_elements):
+        header_row = None
+        data_rows = []
+
+        for tr in tr_elements:
+            if is_width_only_row(tr):
+                continue
+
+            cells = tr.find_all(["td", "th"])
+            texts = [clean_text(td.get_text()) for td in cells]
+
+            # Header row = row with bold spans
+            if not header_row and any("font-weight:700" in span.get("style", "") for td in cells for span in td.find_all("span")):
+                header_row = texts
+                continue
+
+            row = merge_currency_cells(texts)
+            row = merge_percent_cells(row)
+            if any(cell.strip() for cell in row):
+                data_rows.append(row)
+
+        return header_row, data_rows
+
     for tag in soup.find_all(["span", "table"]):
         text = tag.get_text(strip=True)
 
@@ -139,61 +153,33 @@ def extract_html_tables(html_content):
             current_section = f"Item {number}: {title}" if title else f"Item {number}"
 
         if tag.name == "table":
-            rows = []
-            for tr in tag.find_all("tr"):
-                row = [clean_text(td.get_text()) for td in tr.find_all(["td", "th"])]
-                row = merge_currency_cells(row)
-                row = merge_percent_cells(row)
-                if any(cell.strip() for cell in row):
-                    rows.append(row)
+            trs = tag.find_all("tr")
+            header, data_rows = get_table_header_and_data(trs)
 
-            if not rows:
+            if not data_rows:
                 continue
 
-            max_len = max(len(row) for row in rows)
-            padded_rows = [row + [''] * (max_len - len(row)) for row in rows]
+            # If header exists and first cell is empty, call it "Category"
+            if header and not header[0].strip():
+                header[0] = "Category"
 
-            if all(cell.strip() == '' for row in padded_rows for cell in row):
-                continue
+            # Left-shift header by removing empty cells
+            header = [cell.strip() for cell in header if cell.strip()] if header else []
+            max_cols = max(len(header), max((len(row) for row in data_rows), default=0))
 
-            df = None
+            # Pad header
+            while len(header) < max_cols:
+                header.append(f"col_{len(header)}")
 
-            if is_dual_header(padded_rows):
-                header_row = [f"{a.strip()} {b.strip()}".strip() for a, b in zip(padded_rows[0], padded_rows[1])]
-                if not header_row[0]:
-                    header_row[0] = "Category"
-                data_rows = padded_rows[2:]
-                df = pd.DataFrame(data_rows, columns=header_row)
-            else:
-                first_row = padded_rows[0]
-                is_header_row = all(len(cell) < 40 for cell in first_row)
-                if is_header_row:
-                    if not first_row[0]:
-                        first_row[0] = "Category"
-                    # Shift headers left (remove empty strings between header values)
-                    shifted_header = [cell for cell in first_row if cell.strip()]
-                    num_cols = max(len(shifted_header), max(len(row) for row in padded_rows))
+            # Left-shift and pad data rows
+            padded_data = []
+            for row in data_rows:
+                shifted_row = [cell.strip() for cell in row if cell.strip()]
+                while len(shifted_row) < max_cols:
+                    shifted_row.append("")
+                padded_data.append(shifted_row)
 
-                    # Fill missing header names
-                    while len(shifted_header) < num_cols:
-                        shifted_header.append(f"col_{len(shifted_header)}")
-
-
-
-                    column_headers = shifted_header
-
-                    # Align all data rows to same number of columns
-                    data_rows = []
-                    for row in padded_rows[1:]:
-                        # Shift row left to remove empty strings in between
-                        shifted_row = [cell for cell in row if cell.strip()]
-                        while len(shifted_row) < len(column_headers):
-                            shifted_row.append("")  # pad missing cols
-                        data_rows.append(shifted_row)
-
-                    df = pd.DataFrame(data_rows, columns=column_headers)
-                else:
-                    df = pd.DataFrame(padded_rows, columns=[f"col_{i}" for i in range(max_len)])
+            df = pd.DataFrame(padded_data, columns=header)
 
             if df.dropna(how="all").shape[0] <= 1:
                 continue
@@ -235,7 +221,7 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
 
             # Extract and save tables regardless of whether PDF exists
             tables = []
-            if form_type.upper() in ("10-K", "10-Q"):
+            if form_type.upper() in ("10-K"):
                 tables = extract_html_tables(html_content)
 
                 form_output_dir = os.path.join("tables_extracted", cik_stripped, form_type.upper())
