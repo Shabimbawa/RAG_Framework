@@ -5,11 +5,14 @@ from langchain_perplexity import ChatPerplexity
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from neo4j import GraphDatabase, basic_auth
+from dotenv import load_dotenv
 
-URI = "bolt://localhost:7687"
-username = "neo4j"
-password = "password123"
-PERPLEXITY_API_KEY = "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"
+load_dotenv
+
+URI = os.getenv("NEO4J_URI")
+username = os.getenv("NEO4J_USER")
+password = os.getenv("NEO4J_PASS")
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
 JSON_DIR = "tables_extracted/320193/10-K"
 
 chat = ChatPerplexity(
