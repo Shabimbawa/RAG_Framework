@@ -27,25 +27,41 @@ You are a Cypher expert. Convert the following JSON into a Cypher query to store
 
 Instructions:
 
-- Create a parent Table node using properties from the metadata section.
-    - Create an appropriate name for the parent table node using the information found in the prev_span, next_span and section_header fields
-    - Ignore prev_span, next_span, or section_header fields if they contain unstructured or irrelevant text
-- Each item in the data array becomes a DataRow node.
-- Use the column_headers list to define property keys for each DataRow.
-- Clean all property names and keys:
+- Extract the year from `metadata.source_file` by getting the 4 digits immediately after the first dash ("-").
+- Match the correct Year node using:
+    - `Company` node with `company_ticker = metadata.company_ticker`
+    - `FilingType` node with `filing_type = metadata.form_type`
+    - `Year` node with `year = extracted year`
+- Connect the new Table node to this Year node with a `:HAS_TABLE` relationship.
+
+### Table Node:
+- Create a `Table` node with these properties:
+    - `source_file`, `company_ticker`, `form_type`, `table_index`, and `extraction_date` from `metadata`.
+    - A `title` derived from the `prev_span` and/or `next_span` fields:
+        - If both are structured, concatenate them.
+        - If only one is usable, use that.
+        - Ignore if they’re irrelevant/unstructured.
+    - Use `MERGE` for the `Table` node.
+
+### DataRow Nodes:
+- Each object in the `data` array becomes a new `DataRow` node.
+- Use the `column_headers` list from metadata to define property keys.
+- Clean all column header strings:
     - Replace spaces with underscores.
     - Remove or escape special characters like :, %, $, (, ), and commas.
-    - If a key starts with a digit or contains characters that make it an invalid Cypher identifier, wrap it in backticks ( `like_this` ).
-- Exclude columns from column_headers if:
-- They are placeholders (e.g., "col_X").
-- They are empty or have no non-empty values across all rows.
-- Convert values like "$274,515" to numerical format where applicable, keeping the original string as original_value.
-- Use MERGE only for the Table node to avoid duplication.
-- Use CREATE for each DataRow node.
-- Connect each DataRow to its parent Table node using a :HAS_DATA relationship.
-- Ignore section_header, prev_span, or next_span if they contain unstructured or irrelevant text.
-- Return only a single Cypher query — no markdown, no explanations, no formatting.
-- Avoid placing WITH immediately after WHERE, and do not include multiple Cypher statements.
+    - If a key starts with a digit (e.g., "2020"), prefix it with `year_` (e.g., `year_2020`) instead of wrapping in backticks.
+
+- Exclude columns like `"col_5"`, `"col_6"` if they are placeholders or empty across all rows.
+- Parse values like `"$94.68"` or `"$56,353"` into floats (e.g. `94.68` and `56353`), but also keep the original string under an `original_value` field.
+
+### Relationships:
+- Use `MERGE` only for the Table node (to avoid duplicates).
+- Use `CREATE` for each DataRow node.
+- Connect each DataRow to the Table using a `:HAS_DATA` relationship.
+- Connect the Table node to the matched Year node using `:HAS_TABLE`.
+
+### Output:
+- Output a single valid Cypher query — no markdown, no comments, no explanations, no formatting hints.
 
 JSON:
 {json_data}
@@ -54,7 +70,7 @@ Cypher Query:
 """
 
 def process_json_files():
-    for filename in os.listdir(JSON_DIR)[:5]:
+    for filename in sorted(os.listdir(JSON_DIR))[4:7]:
         if filename.endswith(".json"):
             filepath = os.path.join(JSON_DIR, filename)
             with open(filepath, 'r') as f:
