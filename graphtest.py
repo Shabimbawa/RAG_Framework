@@ -6,8 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from neo4j import GraphDatabase, basic_auth
 from dotenv import load_dotenv
-
-load_dotenv
+load_dotenv()
 
 URI = os.getenv("NEO4J_URI")
 username = os.getenv("NEO4J_USER")
@@ -17,7 +16,7 @@ JSON_DIR = "tables_extracted/320193/10-K"
 
 chat = ChatPerplexity(
     temperature=0,
-    model="sonar",
+    model="sonar-pro",
     pplx_api_key=PERPLEXITY_API_KEY,
 )
 
@@ -27,16 +26,26 @@ CYPHER_PROMPT_TEMPLATE = """
 You are a Cypher expert. Convert the following JSON into a Cypher query to store it in a Neo4j graph.
 
 Instructions:
-- Create one parent node called `Table` with properties from the `metadata` section.
-- Each entry in the `data` array should become a `DataRow` node.
-- Use the `column_headers` list to define property names in each `DataRow`.
-- Clean all property names: remove colons (`:`), %, $, and special characters. Use underscores for spacing.
-- Use `MERGE` only for the `Table` node. Use `CREATE` for all `DataRow` nodes.
-- Connect each `DataRow` to its `Table` using a `:HAS_DATA` relationship.
-- Ignore `section_header`, `prev_span`, or `next_span` if they contain irrelevant or noisy text.
-- Omit columns that are clearly placeholders or empty (like `col_1`, `col_2`) unless they contain real values.
-- Return only ONE Cypher query — no explanations, no code blocks, and no formatting.
-- Avoid syntax issues: do not place `WITH` immediately after `WHERE`. Do not include multiple Cypher statements.
+
+- Create a parent Table node using properties from the metadata section.
+    - Create an appropriate name for the parent table node using the information found in the prev_span, next_span and section_header fields
+    - Ignore prev_span, next_span, or section_header fields if they contain unstructured or irrelevant text
+- Each item in the data array becomes a DataRow node.
+- Use the column_headers list to define property keys for each DataRow.
+- Clean all property names and keys:
+    - Replace spaces with underscores.
+    - Remove or escape special characters like :, %, $, (, ), and commas.
+    - If a key starts with a digit or contains characters that make it an invalid Cypher identifier, wrap it in backticks ( `like_this` ).
+- Exclude columns from column_headers if:
+- They are placeholders (e.g., "col_X").
+- They are empty or have no non-empty values across all rows.
+- Convert values like "$274,515" to numerical format where applicable, keeping the original string as original_value.
+- Use MERGE only for the Table node to avoid duplication.
+- Use CREATE for each DataRow node.
+- Connect each DataRow to its parent Table node using a :HAS_DATA relationship.
+- Ignore section_header, prev_span, or next_span if they contain unstructured or irrelevant text.
+- Return only a single Cypher query — no markdown, no explanations, no formatting.
+- Avoid placing WITH immediately after WHERE, and do not include multiple Cypher statements.
 
 JSON:
 {json_data}
