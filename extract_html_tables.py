@@ -1,7 +1,9 @@
 import pandas as pd
 import numpy as np
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 import re
+
 
 def extract_html_tables(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -44,11 +46,24 @@ def extract_html_tables(html_content):
         return merged
 
     def get_closest_span(element, direction="prev"):
-        spans = element.find_all_previous("span") if direction == "prev" else element.find_all_next("span")
-        for span in spans:
-            text = clean_text(span.get_text())
+        skip_phrases = [
+            "copyright", "all rights reserved", "sec filings", "terms of service",
+            "privacy policy", "form 10-k", "form 10-q", "form 8-q", "©", "&#169;"
+        ] #Can add more phrases to the list to broaden the span skip
+
+        next_span = element.find_previous("span") if direction == "prev" else element.find_next("span")
+
+        while next_span:
+            text = clean_text(next_span.get_text())
             if text:
+                lower_text = text.lower()
+                if any(phrase in lower_text for phrase in skip_phrases):
+                    next_span = next_span.find_previous("span") if direction == "prev" else next_span.find_next("span")
+                    continue
                 return text
+
+            next_span = next_span.find_previous("span") if direction == "prev" else next_span.find_next("span")
+
         return ""
 
     def is_width_only_row(tr):
@@ -79,14 +94,17 @@ def extract_html_tables(html_content):
         return header_row, data_rows
 
     for tag in soup.find_all(["span", "table"]):
-        text = tag.get_text(strip=True)
-
-        # Update section header
-        match = item_regex.search(text)
-        if match:
-            number = match.group(1)
-            title = match.group(2)
-            current_section = f"Item {number}: {title}" if title else f"Item {number}"
+        
+        #Update section header
+        if tag.name == "span":
+            text = tag.get_text(strip=True)
+            style = tag.get("style", "")
+            if item_regex.search(text) and "font-weight:700" in style:
+                match = item_regex.search(text)
+                if match:
+                    number = match.group(1)
+                    title = match.group(2)
+                    current_section = f"Item {number}: {title}" if title else f"Item {number}"
 
         if tag.name == "table":
             trs = tag.find_all("tr")
