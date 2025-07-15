@@ -34,25 +34,29 @@ You are a Cypher expert. Given a user query that includes:
 
 Generate a Cypher query to retrieve relevant data using the following graph schema:
 
-### Graph Schema:
+Graph Schema:
 - (Company)-[:HAS_FILING]->(FilingType)-[:HAS_YEAR]->(Year)-[:HAS_TABLE]->(Table)-[:HAS_DATA]->(DataRow)
-- Node properties:
-  - Company: company_name, company_ticker
-  - FilingType: form_type
-  - Year: filing_year
-  - Table: title
-  - DataRow: column names vary (e.g., Category, year_2020, etc.)
 
-### Rules:
-- Match company nodes using:  
+Node properties:
+- Company: company_name, company_ticker
+- FilingType: form_type
+- Year: filing_year
+- Table: title
+- DataRow: column names vary (e.g., Category, year_2020, etc.)
+
+Rules:
+- Match company nodes using:
   `toLower(c.company_name) CONTAINS ...` or `toLower(c.company_ticker) = ...`
-- Match `form_type` and `filing_year` exactly — `filing_year` is stored as a **string**, so wrap it in double quotes (e.g., `"2020"`).
-- Use `toLower(toString(...))` for any field that might be a string or number (like `Category`) to avoid errors.
-- Match rows by checking `toLower(toString(row.Category))` or specific year-labeled properties (e.g., `row.year_2020`).
-- Return `table.title`, `row`, or specific values as needed.
-- Output only a Cypher query — no explanations, no formatting, no comments.
+- If the user query **does not explicitly mention** the form type or year:
+  - Do not include those conditions in the query
+  - Do not assume or guess a default form_type like "10-K"
+  - Use OPTIONAL MATCH if needed, or sort years using `ORDER BY y.filing_year DESC LIMIT 1`
+- When form_type or filing_year are known, match them exactly. Wrap filing_year in double quotes (e.g., "2020").
+- Use `toLower(toString(...))` for fields like Category or table values to ensure compatibility.
+- Return table.title, row, or specific fields as needed.
+- Output the Cypher query only — do NOT include markdown formatting, backticks, or the word "cypher".
 
-### User Query:
+User Query:
 \"\"\"{user_query}\"\"\"
 
 Cypher Query:

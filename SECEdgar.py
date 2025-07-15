@@ -88,7 +88,7 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
 
             # Extract and save tables regardless of whether PDF exists
             tables = []
-            if form_type.upper() in ("10-K"):
+            if form_type.upper() in ("10-Q"):
                 tables = extract_html_tables(html_content)
 
                 form_output_dir = os.path.join("tables_extracted", cik_stripped, form_type.upper())
