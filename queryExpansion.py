@@ -1,13 +1,17 @@
 import random
 import requests
 from datasets import load_dataset
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
 
 ds = load_dataset("intfloat/query2doc_msmarco", split="train")
 
 
 
-PERPLEXITY_API_KEY = "ENV file"
+
 
 def expand_query(query, k=4, model="sonar-pro"):
     few_shot_examples = random.sample(list(ds), k)
@@ -57,13 +61,8 @@ def dense_formatting(og_query, pseudo_doc):
 
 
 
-sparseQuery= sparse_formatting(query, psuedo_doc)
-denseQuery= dense_formatting(query, psuedo_doc)
 
-print(sparseQuery)
-print(denseQuery)
-
-
+__all__ = ["expand_query", "sparse_formatting", "dense_formatting"]
 
 
 

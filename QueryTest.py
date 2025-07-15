@@ -5,6 +5,7 @@ import os
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch.nn.functional as F
+from queryExpansion import expand_query, sparse_formatting, dense_formatting
 
 reranker_tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-reranker-base")  # or large
 reranker_model = AutoModelForSequenceClassification.from_pretrained("BAAI/bge-reranker-base")
@@ -15,14 +16,16 @@ client = MilvusClient(uri="http://localhost:19530", token="root:Milvus")
 connections.connect(host="localhost", ports="19530")
 
 # Your search query
-query_text = "How many shares of common stock were issued and outstanding in Apple 2024"
-
+query_text = "What is the useful life of Apple’s property, plant, and equipment disclosed in 2020?"
+psuedo_doc= expand_query(query_text)
+sparse_query= sparse_formatting(query_text, psuedo_doc)
+dense_query= dense_formatting(query_text, psuedo_doc)
 
 # SPARSE SEARCH
 def sparse_retrieval_test():
     sparse_results = client.search(
         collection_name="sec_chunks_sparse",
-        data=[query_text],  # BM25 function will convert text to sparse vector automatically
+        data=[sparse_query],  # BM25 function will convert text to sparse vector automatically
         anns_field="sparse",  # Search on the sparse vector field
         limit=5,  # Number of results to return
         output_fields=["text", "ticker", "form_type", "source_file", "chunk_id"],
@@ -89,7 +92,7 @@ def dense_retrieval_test():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
 
-    query_embedding = model.encode(query_text, convert_to_numpy=True)
+    query_embedding = model.encode(dense_query, convert_to_numpy=True)
     print("Query Embedded")
 
     search_params = {
