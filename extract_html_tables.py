@@ -93,9 +93,10 @@ def extract_html_tables(html_content):
 
         return header_row, data_rows
 
+    last_table = None
+
     for tag in soup.find_all(["span", "table"]):
-        
-        #Update section header
+        # 🔹 Detect section header from span
         if tag.name == "span":
             text = tag.get_text(strip=True)
             style = tag.get("style", "")
@@ -106,6 +107,7 @@ def extract_html_tables(html_content):
                     title = match.group(2)
                     current_section = f"Item {number}: {title}" if title else f"Item {number}"
 
+        # 🔹 Table extraction starts here
         if tag.name == "table":
             trs = tag.find_all("tr")
             header, data_rows = get_table_header_and_data(trs)
@@ -113,19 +115,17 @@ def extract_html_tables(html_content):
             if not data_rows:
                 continue
 
-            # If header exists and first cell is empty, call it "Category"
+            # Use default name for empty headers
             if header and not header[0].strip():
                 header[0] = "Category"
 
-            # Left-shift header by removing empty cells
+            # Remove empty headers and fill remaining
             header = [cell.strip() for cell in header if cell.strip()] if header else []
             max_cols = max(len(header), max((len(row) for row in data_rows), default=0))
 
-            # Pad header
             while len(header) < max_cols:
                 header.append(f"col_{len(header)}")
 
-            # Left-shift and pad data rows
             padded_data = []
             for row in data_rows:
                 shifted_row = [cell.strip() for cell in row if cell.strip()]
@@ -133,7 +133,7 @@ def extract_html_tables(html_content):
                     shifted_row.append("")
                 padded_data.append(shifted_row)
 
-            df = pd.DataFrame(padded_data, columns=header)
+            df = pd.DataFrame(padded_data, columns=header if header else [f"col_{i}" for i in range(max_cols)])
 
             if df.dropna(how="all").shape[0] <= 1:
                 continue
@@ -141,13 +141,50 @@ def extract_html_tables(html_content):
             prev_span = get_closest_span(tag, "prev")
             next_span = get_closest_span(tag, "next")
 
-            tables.append({
+            # 🔁 Merge logic starts here
+            should_merge = False
+            if last_table:
+                same_section = last_table["section_header"] == (current_section or "Unknown")
+                
+                # ✅ Simplified logic: if all headers are "col_*", it's a follow-up table
+                headers_are_all_generic = all(h.startswith("col_") for h in header)
+                headers_missing = headers_are_all_generic or not header
+
+                if same_section and headers_missing:
+                    should_merge = True
+
+            if should_merge:
+                print(f"[MERGE] Merged table into previous — section: {current_section}")
+
+
+                # 🔧 Adjust columns if necessary (padding or trimming)
+                prev_cols = list(last_table["table"].columns)
+                col_diff = len(prev_cols) - len(df.columns)
+
+                if col_diff > 0:
+                    for i in range(col_diff):
+                        df[f"pad_col_{i}"] = ""
+                elif col_diff < 0:
+                    df = df.iloc[:, :len(prev_cols)]
+
+                df.columns = prev_cols
+                last_table["table"] = pd.concat([last_table["table"], df], ignore_index=True)
+                last_table["num_rows"] = len(last_table["table"])
+                continue
+
+
+
+            # ➕ Add as new table
+            current_table = {
                 "table": df,
                 "prev_span": prev_span,
                 "next_span": next_span,
                 "section_header": current_section or "Unknown",
                 "num_rows": len(df),
                 "num_cols": len(df.columns)
-            })
+            }
+
+            tables.append(current_table)
+            last_table = current_table
 
     return tables
