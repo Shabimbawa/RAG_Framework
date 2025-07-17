@@ -13,7 +13,7 @@ URI = os.getenv("NEO4J_URI")
 username = os.getenv("NEO4J_USER")
 password = os.getenv("NEO4J_PASS")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
-JSON_DIR = "tables_extracted/320193/10-K"
+JSON_DIR = "tables_extracted/320193/10-Q"
 
 chat = ChatPerplexity(
     temperature=0,
