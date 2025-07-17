@@ -82,6 +82,14 @@ def run_cypher_query(cypher_query: str):
             print("Error running query:", e)
             print("Query was:", cypher_query)
 
+# This function is for the 'JointRetrieval' file
+def execute_graph_retrieval_process(user_query: str):
+    cypher_query = generate_cypher_from_query(user_query)
+    run_cypher_query(cypher_query)
+
+def close_drivers():
+    driver.close()
+
 if __name__ == "__main__":
     user_query = input("Ask your financial graph question (e.g., 'Show Apple’s net income in 2020 10-K'): ")
     cypher_query = generate_cypher_from_query(user_query)
