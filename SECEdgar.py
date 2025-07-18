@@ -18,7 +18,7 @@ import nltk
 #nltk.download("punkt")  needed to be run once only
 from extract_html_tables import extract_html_tables # Look/Change extract_html_tables.py file 
 
-#os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
+os.chdir(r"c:\Users\Rhenz\Documents\School\CodeFolders\Thesis\RAG")
 
 # Opening the OG dataset with all companies in SEC EDGAR
 with open("company_tickers_exchange.json", "r") as f:
@@ -195,7 +195,7 @@ def download_filings(cik_list, output_dirs, headers, five_years_prior):
         time.sleep(0.11) # rate limits
 
 
-download_filings(cik_list, output_dirs, headers, five_years_prior)
+#download_filings(cik_list, output_dirs, headers, five_years_prior)
 
 
 def extract_and_save_spans(base_path=".", input_folders=["10-k_documents", "10-q_documents", "8-k_documents"]):
@@ -305,7 +305,7 @@ def segment_config(base_path, input_folders, output_folder, chunk_size, chunk_ov
 
         print(f"\nProcessing {form_type}...")
 
-        for ticker in sorted(os.listdir(input_dir)):  # limit to first ticker
+        for ticker in sorted(os.listdir(input_dir)):
             ticker_input_dir = os.path.join(input_dir, ticker)
             if not os.path.isdir(ticker_input_dir):
                 continue
@@ -313,33 +313,39 @@ def segment_config(base_path, input_folders, output_folder, chunk_size, chunk_ov
             ticker_output_dir = os.path.join(output_form_dir, ticker)
             os.makedirs(ticker_output_dir, exist_ok=True)
 
-            for file in sorted(os.listdir(ticker_input_dir)):  # limit to first 3 files
-                if not file.endswith(".txt"):
+            for file in sorted(os.listdir(ticker_input_dir)):
+                if not file.endswith(".json"):
                     continue
 
                 file_path = os.path.join(ticker_input_dir, file)
+
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
-                        full_text = f.read()
+                        data = json.load(f)
 
-                    chunks = splitter.split_text(full_text)
                     chunk_objects = []
-                    char_pointer = 0
+                    item_keys = [key for key in data if key.startswith("item_")]
 
-                    for i, chunk in enumerate(chunks):
-                        start = full_text.find(chunk, char_pointer)
-                        end = start + len(chunk)
-                        char_pointer = end  # move pointer forward
+                    for item_key in item_keys:
+                        content = data[item_key].strip()
+                        if not content:
+                            continue
 
-                        chunk_objects.append({
-                            "chunk_id": i + 1,
-                            "content": chunk,
-                            "start_index": start,
-                            "end_index": end,
-                            "source_file": file,
-                            "ticker": ticker,
-                            "form_type": form_type.replace("-texts", "")  
-                        })
+                        # Replace newlines with spaces before chunking
+                        content = content.replace("\n", " ")
+
+                        item_chunks = splitter.split_text(content) if len(content) > chunk_size else [content]
+
+                        for i, chunk in enumerate(item_chunks):
+                            chunk_objects.append({
+                                "chunk_id": f"{item_key}_{i + 1}",
+                                "item": item_key,
+                                "content": chunk,
+                                "ticker": data.get("company", ""),
+                                "form_type": data.get("filing_type", ""),
+                                "filing_date": data.get("filing_date", ""),
+                                "source_file": file
+                            })
 
                     output_filename = os.path.splitext(file)[0] + "_chunks.json"
                     output_path = os.path.join(ticker_output_dir, output_filename)
@@ -347,13 +353,13 @@ def segment_config(base_path, input_folders, output_folder, chunk_size, chunk_ov
                     with open(output_path, "w", encoding="utf-8") as json_file:
                         json.dump(chunk_objects, json_file, indent=2, ensure_ascii=False)
 
-                    print(f"Chunked and saved: {file} -> {len(chunks)} chunks")
+                    print(f"Chunked and saved: {file} -> {len(chunk_objects)} chunks")
 
                 except Exception as e:
                     print(f"Error processing {file_path}: {e}")
 
-#segment_dense()
-#segment_sparse()
+segment_dense()
+segment_sparse()
 
 
 def embed_chunks_bm25(base_path=".", input_folder="chunked_sparse", output_folder="embedded_sparse_bm25"):
