@@ -11,18 +11,11 @@ reranker_tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-reranker-base")  # 
 reranker_model = AutoModelForSequenceClassification.from_pretrained("BAAI/bge-reranker-base")
 reranker_model.eval().to("cuda" if torch.cuda.is_available() else "cpu")
 
-
 client = MilvusClient(uri="http://localhost:19530", token="root:Milvus")
 connections.connect(host="localhost", ports="19530")
 
-# Your search query
-query_text = "What is the useful life of Apple’s property, plant, and equipment disclosed in 2020?"
-psuedo_doc= expand_query(query_text)
-sparse_query= sparse_formatting(query_text, psuedo_doc)
-dense_query= dense_formatting(query_text, psuedo_doc)
-
 # SPARSE SEARCH
-def sparse_retrieval_test():
+def sparse_retrieval_test(sparse_query:str):
     sparse_results = client.search(
         collection_name="sec_chunks_sparse",
         data=[sparse_query],  # BM25 function will convert text to sparse vector automatically
@@ -50,39 +43,8 @@ def sparse_retrieval_test():
 
     return sparse_results
 
-
-
 #DENSE SEARCH
-COLLECTION_NAME = "dense_miniLM"
-def fetch_text(metadata):
-    try:
-        form_type = metadata.get("form_type", "")
-        ticker = metadata.get("ticker", "")
-        source_file = metadata.get("source_file", "")
-
-        base_dir = "chunked_dense"
-
-        form_dir = f"{form_type}-texts" if form_type else ""
-
-        chunk_dir = os.path.join(base_dir, form_dir, ticker.lower())
-        chunk_file  = os.path.join(chunk_dir, source_file)
-
-        with open(chunk_file, 'r', encoding="utf-8") as f:
-            chunks = json.load(f)
-        
-        chunk_id = metadata.get("chunk_id", "")
-        for chunk in chunks:
-            if str(chunk.get("chunk_id", "")) == str(chunk_id):
-                return chunk.get("content", "")
-        
-        return "Chunk not found"
-    except FileNotFoundError:
-        return f"File not found: {chunk_file}"
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-
-def dense_retrieval_test():
+def dense_retrieval_test(dense_query:str):
 
     collection = Collection(COLLECTION_NAME)
     collection.load()
@@ -136,9 +98,33 @@ def dense_retrieval_test():
     
     return results
 
+COLLECTION_NAME = "dense_miniLM"
+def fetch_text(metadata):
+    try:
+        form_type = metadata.get("form_type", "")
+        ticker = metadata.get("ticker", "")
+        source_file = metadata.get("source_file", "")
 
+        base_dir = "chunked_dense"
 
+        form_dir = f"{form_type}-texts" if form_type else ""
 
+        chunk_dir = os.path.join(base_dir, form_dir, ticker.lower())
+        chunk_file  = os.path.join(chunk_dir, source_file)
+
+        with open(chunk_file, 'r', encoding="utf-8") as f:
+            chunks = json.load(f)
+        
+        chunk_id = metadata.get("chunk_id", "")
+        for chunk in chunks:
+            if str(chunk.get("chunk_id", "")) == str(chunk_id):
+                return chunk.get("content", "")
+        
+        return "Chunk not found"
+    except FileNotFoundError:
+        return f"File not found: {chunk_file}"
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 def rerank(query, passages, top_k=5):
     inputs = reranker_tokenizer(
@@ -156,26 +142,31 @@ def rerank(query, passages, top_k=5):
     ranked = sorted(zip(passages, scores.tolist()), key=lambda x: x[1], reverse=True)
     return ranked[:top_k]
 
+def execute_vector_retrieval(user_query:str):
+    psuedo_doc= expand_query(user_query)
+    sparse_query= sparse_formatting(user_query, psuedo_doc)
+    dense_query= dense_formatting(user_query, psuedo_doc)
 
-sparse_results= sparse_retrieval_test()
-dense_results= dense_retrieval_test()
+    sparse_results= sparse_retrieval_test(sparse_query)
+    dense_results= dense_retrieval_test(dense_query)
 
-passages = []  # Collect from both sparse and dense
-# Example from sparse:
-for result in sparse_results[0]:
-    passages.append(result['entity']['text'])
+    compiled_results = []
+    
+    for result in sparse_results[0]:
+        compiled_results.append(result['entity']['text'])
 
-# Example from dense:
-for hit in dense_results[0]:
-    text = fetch_text({...})  # Already in your code
-    passages.append(text)
+    for hit in dense_results[0]:
+        text = fetch_text({...})  # Already in your code
+        compiled_results.append(text)
+
+    reranked = rerank(user_query, compiled_results, top_k=5)
+
+    print("\nFinal Reranked Results:")
+    for i, (text, score) in enumerate(reranked):
+        print(f"Rank {i+1} - Score: {score:.4f}")
+        print(text[:300], "...\n", "-"*60)
 
 
 
 
-reranked = rerank(query_text, passages, top_k=5)
 
-print("\n📚 Final Reranked Results:")
-for i, (text, score) in enumerate(reranked):
-    print(f"Rank {i+1} - Score: {score:.4f}")
-    print(text[:300], "...\n", "-"*60)
