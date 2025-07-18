@@ -1,15 +1,17 @@
 from QueryRouting import classify_query
 from GraphQueryTest import execute_graph_retrieval_process, close_drivers
+from QueryTest import execute_vector_retrieval
 
+# For the 'execute' functions, maybe itd be better if they returned the results instead of printing it straight from the function
 
 def handle_tabular(query):
-    print("Routing to Neo4j")
+    print("Routing to Neo4j (GRAPH)")
     execute_graph_retrieval_process(query)
     close_drivers()
 
 def handle_textual(query):
-    print("Routing to Milvus")
-    # Insert function for milvus embedding retrieval
+    print("Routing to Milvus (TEXTUAL)")
+    execute_vector_retrieval(query)
 
 def handle_both(query): # This function still iffy, cuz im not sure how the retrieval process will work
     handle_tabular(query)
