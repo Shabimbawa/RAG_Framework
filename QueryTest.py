@@ -166,7 +166,9 @@ def execute_vector_retrieval(user_query:str):
         print(f"Rank {i+1} - Score: {score:.4f}")
         print(text[:300], "...\n", "-"*60)
 
-
+if __name__ == "__main__":
+    user_query = input("Enter your query: ")
+    execute_vector_retrieval(user_query)
 
 
 
