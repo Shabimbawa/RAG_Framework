@@ -25,6 +25,7 @@ with open("company_tickers_exchange.json", "r") as f:
     CIK_dict = json.load(f)
 
 CIK_df = pd.DataFrame(CIK_dict["data"], columns=CIK_dict["fields"])
+CIK_to_ticker = {str(row["cik"]).zfill(10): row["ticker"] for _, row in CIK_df.iterrows()}
 nasdaq_df = CIK_df[CIK_df["exchange"] == "Nasdaq"]
 
 # Ticker list so that can find the nasdaq 100 companies since OG json dataset doesn't specify
@@ -67,53 +68,54 @@ for dir_name in output_dirs:
 five_years_prior = datetime.now() - timedelta(5*365)
 
 # Function to do the actual retrieval of the nasdaq 100 company filings
-def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, ticker):
-    for _, row in filtered_filings.iterrows(): #for each filings, download their htm if doesnt exist yet, extract tables from it always, save to tables_extracted folder, convert to pdf if nonexistant
-        file_name = row.primaryDocument
-        access_number = row.accessionNumber.replace("-", "")
-        html_path = os.path.join(output_dir, f"{cik_stripped}_{file_name}") 
-        pdf_path = html_path + ".pdf"
+def extract_and_save_tables(dataset_dir="datasets/RAW_FILINGS"):
+    for root, _, files in os.walk(dataset_dir):
+        if "8-K" in root:
+            continue  # Skip all 8-K folders
 
-        try:
-            if not os.path.exists(html_path):
-                # Download and save HTML only if it doesn't exist
-                filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_stripped}/{access_number}/{file_name}"
-                req_content = requests.get(filing_url, headers=headers).content.decode("utf-8")
-                with open(html_path, "w", encoding="utf-8") as f:
-                    f.write(req_content)
-                html_content = req_content
-            else:
+        if not any(ftype in root for ftype in ("10-K", "10-Q")):
+            continue  # Skip folders that are not 10-K or 10-Q
+
+        for file_name in files:
+            if not file_name.endswith(".htm"):
+                continue
+
+            try:
+                parts = file_name.replace(".htm", "").split("_")
+                if len(parts) != 4:
+                    print(f"Skipping unrecognized file format: {file_name}")
+                    continue
+
+                cik_stripped, form_type, year, accession = parts
+                cik_str = cik_stripped.zfill(10)
+                ticker = CIK_to_ticker.get(cik_str, cik_stripped)  # fallback to CIK if ticker not found
+
+                html_path = os.path.join(root, file_name)
                 with open(html_path, "r", encoding="utf-8") as f:
                     html_content = f.read()
 
-            # Extract and save tables regardless of whether PDF exists
-            tables = []
-            if form_type.upper() in ("10-Q"):
                 tables = extract_html_tables(html_content)
+                if not tables:
+                    print(f"No tables found in {file_name}")
+                    continue
 
-                form_output_dir = os.path.join("tables_extracted", cik_stripped, form_type.upper())
+                form_output_dir = os.path.join("tables_extracted", cik_str, form_type.upper())
                 os.makedirs(form_output_dir, exist_ok=True)
 
-                base_file_name = file_name.rsplit('.', 1)[0]
                 for i, table_info in enumerate(tables):
-                    # output_file = f"{base_file_name}_table_{i}.json"
-                    # output_path = os.path.join(form_output_dir, output_file)
-                    # table_df.to_json(output_path, orient="records", lines=True, index=False)  
-                    #remove everything until with open to revert to this ^
-
-
                     table_df = table_info["table"]
                     prev_span = table_info["prev_span"]
                     next_span = table_info["next_span"]
                     section_header = table_info.get("section_header", "Unknown")
 
+                    # Clean headers
                     column_headers = [
                         col.strip() if col.strip() else f"col_{i}"
                         for i, col in enumerate(table_df.columns)
                     ]
                     table_df.columns = column_headers
 
-                    # Remove empty string values from rows
+                    # Clean row data
                     cleaned_data = [
                         {k: v for k, v in row.items() if str(v).strip() != ""}
                         for row in table_df.to_dict(orient="records")
@@ -123,7 +125,7 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
                         "source_file": file_name,
                         "company_cik": cik_stripped,
                         "form_type": form_type,
-                        "company_ticker": ticker,
+                        "company_ticker": ticker if ticker != cik_stripped else "",
                         "table_index": i,
                         "extraction_date": datetime.now().isoformat(),
                         "column_headers": column_headers,
@@ -137,65 +139,19 @@ def filing_retrievals(filtered_filings, cik_stripped, output_dir, form_type, tic
                         "data": cleaned_data
                     }
 
-                    output_file = f"{base_file_name}_table_{i}.json"
+                    output_file = f"{cik_stripped}_{form_type}_{year}_{accession}_table_{i}.json"
                     output_path = os.path.join(form_output_dir, output_file)
                     with open(output_path, "w", encoding="utf-8") as f:
                         json.dump(json_output, f, indent=2)
 
                     print(f"Saved table {i} from {file_name} to {form_output_dir}")
-            else:
-                print("No tables to be extracted from 8-K form")
-            if not tables:
-                print(f"No tables found in {file_name}")
 
-            # Skip PDF generation if already done
-            # if os.path.exists(pdf_path):
-            #     print(f"PDF already exists for {file_name}")
-            #     continue
-
-            # # [Optional] PDF generation logic can go here if needed
-            # else:
-            #     pdfkit.from_file(html_path, pdf_path, options={"quiet": ""})
-
-        except Exception as e:
-            print(f"Error with {file_name}: {e}")
+            except Exception as e:
+                print(f"Error processing {file_name}: {e}")
 
 
-# Testing with only 2 for now since we might overload their servers LOL
-def download_filings(cik_list, output_dirs, headers, five_years_prior):
-    for cik in cik_list[:1]:
-        cik_padded = str(cik).zfill(10)
-        url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json" #metadata of filings for this CIK
+extract_and_save_tables()
 
-        response = requests.get(url,headers=headers)
-
-        if response.status_code == 200: #if succesful filter by recent, convert these recent to a dataframe
-            data = response.json()
-            print(f"Data for CIK {cik_padded}")
-
-            recent_filings = pd.DataFrame(data["filings"]["recent"])
-            recent_filings["filingDate"] = pd.to_datetime(recent_filings["filingDate"])
-            cik_stripped = str(int(cik))
-
-            form_types = {"10-K": output_dirs[0], "10-Q": output_dirs[1], "8-K": output_dirs[2]} 
-            for form, output_dir in form_types.items(): #filter df by form types and within 5 years prior
-                filtered = recent_filings[(recent_filings["form"] == form) & (recent_filings["filingDate"] >= five_years_prior)]
-
-                if filtered.empty:
-                    print(f"No {form}s from the past 5 years for CIK {cik_padded}")
-                    continue
-
-                ticker = data.get("tickers", [""])[0] if "tickers" in data else ""
-                filing_retrievals(filtered, cik_stripped, output_dir, form, ticker)
-
-            
-        else:
-            print(f"Failed to fetch data for CIK{cik_padded} (status{response.status_code})")
-
-        time.sleep(0.11) # rate limits
-
-
-#download_filings(cik_list, output_dirs, headers, five_years_prior)
 
 
 def extract_and_save_spans(base_path=".", input_folders=["10-k_documents", "10-q_documents", "8-k_documents"]):
@@ -358,8 +314,8 @@ def segment_config(base_path, input_folders, output_folder, chunk_size, chunk_ov
                 except Exception as e:
                     print(f"Error processing {file_path}: {e}")
 
-segment_dense()
-segment_sparse()
+#segment_dense()
+#segment_sparse()
 
 
 def embed_chunks_bm25(base_path=".", input_folder="chunked_sparse", output_folder="embedded_sparse_bm25"):

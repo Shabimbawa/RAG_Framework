@@ -11,4 +11,5 @@ embedded_dense_finbert/
 embedded_dense_allMini/
 extracted_texts/
 __pycache__/
+old_code_versions
 .env
